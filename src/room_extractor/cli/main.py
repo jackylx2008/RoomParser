@@ -8,6 +8,9 @@ from typing import Sequence
 
 from room_extractor import __version__
 from room_extractor.cad import AcCoreConsoleDwgConverter, analyze_layers, convert_dwg_directory, extract_cad_raw, load_dxf
+from room_extractor.extraction import build_room_candidates, build_room_label_candidates
+from room_extractor.models.drawing import CadRawExtraction
+from room_extractor.models.room_label import RoomLabelCandidateSet
 from room_extractor.utils.logger import setup_logger
 
 
@@ -47,6 +50,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="DXFOUT decimal precision.",
     )
     convert_parser.set_defaults(func=_run_convert_dwg)
+
+    labels_parser = subparsers.add_parser("build-room-labels", help="Build Phase 2 room label candidates from cad_raw.json.")
+    labels_parser.add_argument("--cad", required=True, help="Path to Phase 1 cad_raw.json.")
+    labels_parser.add_argument("--out", required=True, help="Path to output room_label_candidates.json.")
+    labels_parser.add_argument("--floor", help="Optional floor value written to candidates.")
+    labels_parser.set_defaults(func=_run_build_room_labels)
+
+    rooms_parser = subparsers.add_parser("build-room-candidates", help="Build Phase 3 room candidates by matching labels to CAD boundaries.")
+    rooms_parser.add_argument("--cad", required=True, help="Path to Phase 1 cad_raw.json.")
+    rooms_parser.add_argument("--labels", required=True, help="Path to Phase 2 room_label_candidates.json.")
+    rooms_parser.add_argument("--out", required=True, help="Path to output room_candidates.json.")
+    rooms_parser.add_argument("--floor", help="Optional floor value written to candidates.")
+    rooms_parser.add_argument("--min-boundary-area", type=float, default=1_000_000.0, help="Minimum CAD polygon area kept as a boundary.")
+    rooms_parser.add_argument("--max-boundary-area", type=float, default=2_000_000_000.0, help="Maximum CAD polygon area kept as a boundary.")
+    rooms_parser.set_defaults(func=_run_build_room_candidates)
 
     return parser
 
@@ -107,6 +125,36 @@ def _run_convert_dwg(args: argparse.Namespace) -> int:
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 1 if payload["failed"] else 0
+
+
+def _run_build_room_labels(args: argparse.Namespace) -> int:
+    cad_path = Path(args.cad)
+    out_path = Path(args.out)
+    cad_raw = CadRawExtraction.model_validate_json(cad_path.read_text(encoding="utf-8"))
+    result = build_room_label_candidates(cad_raw, floor=args.floor)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_build_room_candidates(args: argparse.Namespace) -> int:
+    cad_path = Path(args.cad)
+    labels_path = Path(args.labels)
+    out_path = Path(args.out)
+    cad_raw = CadRawExtraction.model_validate_json(cad_path.read_text(encoding="utf-8"))
+    labels = RoomLabelCandidateSet.model_validate_json(labels_path.read_text(encoding="utf-8"))
+    result = build_room_candidates(
+        cad_raw,
+        labels,
+        floor=args.floor,
+        min_boundary_area=float(args.min_boundary_area),
+        max_boundary_area=float(args.max_boundary_area),
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
 
 
 if __name__ == "__main__":

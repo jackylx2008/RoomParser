@@ -48,6 +48,18 @@ def is_point_in_polygon(point: Point, polygon_points: Sequence[Point]) -> bool:
     return bool(polygon.contains(shape_point) or polygon.touches(shape_point))
 
 
+def is_point_in_bbox(point: Point, bbox: BBox) -> bool:
+    """Return True when a point is inside or touches a bbox."""
+    return bbox[0] <= point[0] <= bbox[2] and bbox[1] <= point[1] <= bbox[3]
+
+
+def point_to_bbox_distance(point: Point, bbox: BBox) -> float:
+    """Return the shortest Euclidean distance from a point to a bbox."""
+    dx = max(bbox[0] - point[0], 0.0, point[0] - bbox[2])
+    dy = max(bbox[1] - point[1], 0.0, point[1] - bbox[3])
+    return float((dx * dx + dy * dy) ** 0.5)
+
+
 def polygon_iou(first_points: Sequence[Point], second_points: Sequence[Point]) -> float:
     """Return intersection-over-union for two polygons."""
     if len(first_points) < 3 or len(second_points) < 3:
@@ -60,4 +72,3 @@ def polygon_iou(first_points: Sequence[Point], second_points: Sequence[Point]) -
     if union_area == 0:
         return 0.0
     return float(first.intersection(second).area / union_area)
-

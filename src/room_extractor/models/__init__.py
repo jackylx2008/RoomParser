@@ -12,8 +12,10 @@ from room_extractor.models.drawing import (
 )
 from room_extractor.models.geometry import Geometry
 from room_extractor.models.issue import Issue
+from room_extractor.models.room_label import RoomLabelCandidate, RoomLabelCandidateSet, RoomTextParse
 from room_extractor.models.review import ReviewChange, ReviewRecord
 from room_extractor.models.room import AreaInfo, BasicInfo, Evidence, ReviewState, Room
+from room_extractor.models.room_candidate import RoomBoundaryCandidate, RoomCandidate, RoomCandidateSet
 
 __all__ = [
     "AreaInfo",
@@ -33,5 +35,10 @@ __all__ = [
     "ReviewRecord",
     "ReviewState",
     "Room",
+    "RoomBoundaryCandidate",
+    "RoomCandidate",
+    "RoomCandidateSet",
+    "RoomLabelCandidate",
+    "RoomLabelCandidateSet",
+    "RoomTextParse",
 ]
-

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目已完成 Phase 0 / Phase 1 的基础工程和真实文件验证，并补充了 DWG 到 DXF 的本地转换能力。
+项目已完成 Phase 0 / Phase 1 / Phase 2 / Phase 3 的基础工程、真实文件验证、DWG 到 DXF 的本地转换能力、房间文字识别和 label 聚类，以及房间边界识别。
 
 当前验证环境：
 
@@ -10,6 +10,58 @@
 - Python 3.12
 - AutoCAD 2024
 - `AcCoreConsole.exe`
+
+## 当前工作流程
+
+当前项目按 Phase 递进，但每个 Phase 都需要经历“自动实现 -> 真实图纸输出 -> 人工验收 -> 规则回归调整”的闭环。
+
+已执行的实际流程：
+
+1. Phase 0 / Phase 1 完成基础工程和 DXF 原始解析。
+2. 使用真实 DWG 转换后的 DXF 生成 `cad_raw_real.json`。
+3. 人工确认 DWG 转 DXF 后的 DXF 显示正常。
+4. Phase 2 生成 `room_label_candidates_real.json`。
+5. 人工检查 Phase 2 输出后，确认进入 Phase 3。
+6. Phase 3 生成 `room_candidates_real.json`。
+7. 人工发现未匹配项过多后，回到 Phase 3 调整规则：
+   - 增加 fallback 低置信度匹配。
+   - 增加特殊空间分类。
+   - 增加具体 issue code。
+   - 增加顶层 `summary`。
+8. 重新运行测试和真实图纸输出。
+
+当前执行规范：
+
+1. 每个 Phase 必须有中间 JSON。
+2. 每个 Phase 必须用真实图纸跑通。
+3. 人工验收未通过时，不进入下一 Phase。
+4. 人工反馈先归类为数据修正、规则缺陷或样本沉淀。
+5. 规则缺陷必须调整代码或配置，并重新生成中间 JSON。
+6. 有复用价值的问题必须补测试或规则说明。
+7. 人工确认结果优先级高于自动规则。
+
+流程图：
+
+```mermaid
+flowchart TD
+    A[当前 Phase 开发] --> B[实现代码与配置]
+    B --> C[运行单元测试]
+    C --> D{测试通过?}
+    D -- 否 --> B
+    D -- 是 --> E[真实图纸生成中间 JSON]
+    E --> F[人工验收]
+    F --> G{验收通过?}
+    G -- 是 --> H[记录阶段状态与输出摘要]
+    H --> I[等待进入下一 Phase]
+    G -- 否 --> J[归类反馈]
+    J --> K{反馈类型}
+    K -- 数据修正 --> L[记录到待校核或人工结果]
+    K -- 规则缺陷 --> M[调整代码或配置]
+    K -- 样本沉淀 --> N[补充测试样例或规则样本]
+    L --> E
+    M --> C
+    N --> C
+```
 
 ## 已完成
 
@@ -66,6 +118,55 @@
   - `--dxf-precision`
   - `--keep-scripts`
 
+### Phase 2：房间文字识别
+
+- 新增 `build-room-labels` 命令。
+- 从 Phase 1 输出的 `cad_raw.json` 读取 CAD 文本。
+- 实现 CAD 文本标准化：
+  - 去除多余空白
+  - 统一面积单位
+  - 恢复常见 GBK mojibake 中文文本
+- 实现字段识别：
+  - 面积：`25.60㎡`、`25.60m²`、`25.60m2`、`面积：25.60`
+  - 房号：`B1-023`、`101`、`会议室 252` 等常见形式
+  - 房名：办公室、会议室、贵宾室、卫生间、电梯厅、服务间、后勤用房等常见房间名称
+- 实现相邻文本聚类，将房号、房名、面积合并为 `room_label_candidates.json`。
+- 每个候选包含：
+  - `candidate_id`
+  - `floor`
+  - `room_number`
+  - `room_name`
+  - `area`
+  - `center`
+  - `bbox`
+  - `source_texts`
+  - `confidence`
+  - `issues`
+
+### Phase 3：房间边界识别
+
+- 新增 `build-room-candidates` 命令。
+- 从 Phase 1 输出的 `cad_raw.json` 读取闭合 polyline。
+- 过滤过小 / 过大的 polygon，保留候选房间边界。
+- 每个边界候选输出：
+  - `boundary_id`
+  - `source_polyline_index`
+  - `layer`
+  - `polygon_cad`
+  - `bbox_cad`
+  - `area_cad`
+- 读取 Phase 2 的 `room_label_candidates.json`。
+- 使用 label 中心点匹配包含它的 polygon。
+- 当多个 polygon 同时包含 label 时：
+  - 优先房间边界 / 面积线图层
+  - 再选择面积最小的合适 polygon
+- 普通房间中心点未落入 polygon 时，支持按优先边界图层 bbox 距离进行低置信度 fallback 匹配。
+- fallback 匹配输出 `matched_fallback`，并写入 `LABEL_OUTSIDE_BOUNDARY_FALLBACK_MATCH` issue。
+- 客梯、货梯、电梯厅、走道、通道等特殊空间无面积时不强行 fallback，输出 `SPECIAL_SPACE_NO_AREA_BOUNDARY`，等待人工确认是否作为房间输出。
+- 匹配失败时输出 `auto_failed`，并写入具体 issue code。
+- 顶层 `summary` 输出状态、匹配方式和 issue 统计摘要。
+- 输出 `room_candidates.json`。
+
 ## 真实文件验证
 
 本地真实文件：
@@ -80,6 +181,8 @@
 - 转换后的 DXF 可被 Phase 1 命令读取。
 - `analyze-layers` 成功输出真实图纸图层与实体统计。
 - `extract-cad` 成功输出 `data/output/json/cad_raw_real.json`。
+- `build-room-labels` 成功输出 `data/output/json/room_label_candidates_real.json`。
+- `build-room-candidates` 成功输出 `data/output/json/room_candidates_real.json`。
 
 真实 DXF 统计摘要：
 
@@ -89,6 +192,25 @@
 - `INSERT`：`4056`
 - `LWPOLYLINE`：`5844`
 - closed `LWPOLYLINE`：`3575`
+
+Phase 2 真实输出摘要：
+
+- 解析 CAD 文本数：`1062`
+- room label 候选数：`167`
+- 同时识别到房名、房号、面积的高完整度候选数：`56`
+- 输出文件：`data/output/json/room_label_candidates_real.json`
+
+Phase 3 真实输出摘要：
+
+- 边界候选数：`1984`
+- room candidate 数：`167`
+- 严格匹配到 polygon：`86`
+- fallback 低置信度匹配：`25`
+- 未匹配并分类为 `auto_failed`：`56`
+- 特殊空间无独立边界：`54`
+- 附近有边界但中心点未落入：`2`
+- 同时具备房名、房号、面积且完成严格/fallback 匹配：`54`
+- 输出文件：`data/output/json/room_candidates_real.json`
 
 ## 当前测试
 
@@ -101,15 +223,17 @@ python -m pytest
 当前结果：
 
 ```text
-9 passed
+22 passed
 ```
 
 ## 已知边界
 
 - 当前只解析 DXF，不直接解析 DWG；DWG 必须先通过 `convert-dwg` 转换。
-- 当前不做房间文字识别、房间标签聚类和房间边界匹配，这些属于后续 Phase 2 / Phase 3。
+- 当前已做房间文字识别、房间标签聚类和闭合 polygon 匹配。
+- 当前还不生成正式 `Room` 对象和 `rooms_auto.json`，这属于 Phase 4。
 - 当前不做 PDF 矢量文字校核、截图或人工校核任务池。
-- 部分中文图层名在控制台或 DXF 文本中可能显示为乱码，后续需要单独处理 CAD 编码识别与文本恢复。
+- 常见 CAD 中文文本 mojibake 已在 Phase 2 中恢复；部分图层名或非常规文字仍可能需要后续增强。
+- 部分特殊空间 label 未匹配到 polygon，已通过 `SPECIAL_SPACE_NO_AREA_BOUNDARY` 等 issue 分类记录，后续可由人工确认是否输出为房间。
 - 真实数据目录和输出目录不入 Git：
   - `data/input/**`
   - `data/output/**`
@@ -117,9 +241,8 @@ python -m pytest
 
 ## 下一步建议
 
-1. 进入 Phase 2：房间文字识别。
-2. 从 `cad_raw_real.json` 中分析真实房间文字样式。
-3. 实现面积、房号、房间名称正则与标准化。
-4. 输出 `room_label_candidates.json`。
-5. 为真实图纸补充针对性测试样例，避免直接提交真实项目数据。
-
+1. 等待人工校验 Phase 3 输出。
+2. 人工确认后进入 Phase 4：生成 CAD 自动识别版房间 JSON。
+3. 优先分析 `room_candidates_real.json` 中 `auto_failed` 的房间。
+4. 后续根据 room label 和 polygon 生成正式 `Room` 对象并计算面积偏差。
+5. 为真实图纸补充更多脱敏测试样例，避免直接提交真实项目数据。

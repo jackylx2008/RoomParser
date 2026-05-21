@@ -62,3 +62,100 @@ def test_cli_convert_dwg_prints_summary(tmp_path: Path, capsys, monkeypatch) -> 
     payload = json.loads(capsys.readouterr().out)
     assert payload["total"] == 1
     assert payload["converted"] == 1
+
+
+def test_cli_build_room_labels_writes_json(tmp_path: Path) -> None:
+    cad_path = tmp_path / "cad_raw.json"
+    out_path = tmp_path / "room_label_candidates.json"
+    cad_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "layers": [],
+                "texts": [
+                    {
+                        "text": "会议室 201\nMeeting Room 201\n35.5㎡",
+                        "entity_type": "MTEXT",
+                        "layer": "00C_TEXT_Room",
+                        "position": [10, 20],
+                        "height": 300,
+                        "rotation": 0,
+                    }
+                ],
+                "blocks": [],
+                "polylines": [],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["build-room-labels", "--cad", str(cad_path), "--out", str(out_path), "--floor", "L2"]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["source_file"] == "sample.dxf"
+    assert payload["candidates"][0]["room_name"] == "会议室"
+    assert payload["candidates"][0]["room_number"] == "201"
+    assert payload["candidates"][0]["area"] == 35.5
+
+
+def test_cli_build_room_candidates_writes_json(tmp_path: Path) -> None:
+    cad_path = tmp_path / "cad_raw.json"
+    labels_path = tmp_path / "room_label_candidates.json"
+    out_path = tmp_path / "room_candidates.json"
+    cad_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "layers": [],
+                "texts": [],
+                "blocks": [],
+                "polylines": [
+                    {
+                        "layer": "A-AREA-BNDY",
+                        "entity_type": "LWPOLYLINE",
+                        "closed": True,
+                        "points": [[0, 0], [2000, 0], [2000, 2000], [0, 2000]],
+                        "bbox": [0, 0, 2000, 2000],
+                        "area": 4_000_000,
+                    }
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    labels_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "candidates": [
+                    {
+                        "candidate_id": "label_0001",
+                        "floor": "L2",
+                        "room_number": "201",
+                        "room_name": "会议室",
+                        "area": 35.5,
+                        "area_unit": "m2",
+                        "center": [1000, 1000],
+                        "bbox": [900, 900, 1100, 1100],
+                        "source_texts": [],
+                        "confidence": 1.0,
+                        "issues": [],
+                    }
+                ],
+                "parsed_texts": [],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["build-room-candidates", "--cad", str(cad_path), "--labels", str(labels_path), "--out", str(out_path)]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["room_candidates"][0]["status"] == "matched"
+    assert payload["room_candidates"][0]["boundary"]["area_cad"] == 4_000_000
