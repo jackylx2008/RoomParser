@@ -1,0 +1,38 @@
+room_text_layers:
+  - A-ROOM-TEXT
+  - A-ROOM-NAME
+  - A-ROOM-NO
+  - A-AREA
+  - 房间
+  - 面积
+
+room_boundary_layers:
+  - A-ROOM-BOUNDARY
+  - A-AREA-LINE
+  - A-SPACE
+  - 房间边界
+  - 面积线
+
+wall_layers:
+  - A-WALL
+  - 墙
+  - WALL
+
+ignore_layers:
+  - A-AXIS
+  - A-DIMS
+  - DEFPOINTS
+  - 轴网
+  - 标注
+
+area_units:
+  - ㎡
+  - m²
+  - m2
+  - 平方米
+
+confidence_threshold:
+  auto_pass: 0.85
+  geometry_min: 0.80
+  area_deviation_percent: 5.0
+

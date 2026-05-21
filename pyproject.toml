@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "building-room-extractor"
+version = "0.1.0"
+description = "Extract room-related raw entities from architectural DXF drawings."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "ezdxf>=1.3.0",
+  "pydantic>=2.7.0",
+  "shapely>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[project.scripts]
+room-extractor = "room_extractor.cli.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
