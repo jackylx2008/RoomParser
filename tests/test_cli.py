@@ -245,3 +245,68 @@ def test_cli_export_review_map_writes_html(tmp_path: Path) -> None:
     html = out_path.read_text(encoding="utf-8")
     assert "<svg" in html
     assert "会议室" in html
+
+
+def test_cli_build_rooms_writes_rooms_auto_json(tmp_path: Path) -> None:
+    candidates_path = tmp_path / "room_candidates.json"
+    out_path = tmp_path / "rooms_auto.json"
+    boundary = {
+        "boundary_id": "boundary_00001",
+        "source_polyline_index": 0,
+        "layer": "A-AREA-BNDY",
+        "entity_type": "LWPOLYLINE",
+        "polygon_cad": [[0, 0], [5000, 0], [5000, 5000], [0, 5000]],
+        "bbox_cad": [0, 0, 5000, 5000],
+        "area_cad": 25_000_000,
+    }
+    label = {
+        "candidate_id": "sample_label_0001",
+        "floor": "L2",
+        "room_number": "201",
+        "room_name": "会议室",
+        "area": 25.0,
+        "area_unit": "m2",
+        "center": [2500, 2500],
+        "bbox": [2400, 2400, 2600, 2600],
+        "source_texts": [],
+        "confidence": 1.0,
+        "issues": [],
+    }
+    candidates_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "label_source_file": "sample.dxf",
+                "summary": {},
+                "boundary_candidates": [boundary],
+                "room_candidates": [
+                    {
+                        "room_candidate_id": "room_candidate_0001",
+                        "floor": "L2",
+                        "room_number": "201",
+                        "room_name": "会议室",
+                        "area_text": 25.0,
+                        "area_unit": "m2",
+                        "label_center": [2500, 2500],
+                        "label_bbox": [2400, 2400, 2600, 2600],
+                        "boundary": boundary,
+                        "match_method": "point_in_polygon_smallest_area",
+                        "status": "matched",
+                        "confidence": 1.0,
+                        "label": label,
+                        "issues": [],
+                    }
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["build-rooms", "--candidates", str(candidates_path), "--out", str(out_path)]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["rooms"][0]["basic_info"]["room_name"] == "会议室"
+    assert payload["rooms"][0]["area"]["calculated_value"] == 25.0
+    assert payload["rooms"][0]["geometry"]["geometry_source"] == "cad_auto"

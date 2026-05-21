@@ -1,6 +1,6 @@
 # Building Room Extractor
 
-建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、房间文字识别与 label 聚类、房间边界识别。
+建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成。
 
 ## 当前能力
 
@@ -11,9 +11,10 @@
 - `room-extractor build-room-labels --cad <cad_raw.json> --out <file>` 输出 `room_label_candidates.json`，包含房号、房名、面积和文本聚类结果。
 - `room-extractor build-room-candidates --cad <cad_raw.json> --labels <room_label_candidates.json> --out <file>` 输出 `room_candidates.json`，将房间 label 中心点匹配到闭合 polygon。
 - `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，用于人工看图检查 Phase 3 结果。
+- `room-extractor build-rooms --candidates <room_candidates.json> --out <file>` 输出 `rooms_auto.json`，生成 CAD 自动识别版初始 Room JSON。
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
 
-当前不包含 OCR、VLM、PDF 坐标映射、Streamlit 人工校核界面或正式 Room JSON 生成。
+当前不包含 OCR、VLM、PDF 坐标映射、Streamlit 人工校核界面或最终 Room JSON 生成。
 
 说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试。正式人工校核应放在后续 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
 
@@ -112,6 +113,26 @@ python main.py export-review-map --cad data/output/json/cad_raw.json --rooms dat
 
 检查图是自包含 HTML/SVG 文件，包含浅色 CAD 底图、绿色严格匹配、橙色低置信度匹配、红色未匹配标签和候选列表。它用于 Phase 3 规则验收，不是最终人工校核界面。
 
+## 初始房间 JSON
+
+从 `room_candidates.json` 生成 Phase 4 的 CAD 自动识别版房间 JSON：
+
+```powershell
+python main.py build-rooms --candidates data/output/json/room_candidates.json --out data/output/json/rooms_auto.json
+```
+
+输出包括：
+
+- `rooms`：标准 `Room` 对象列表。
+- `basic_info`：楼层、房号、房名、房间类型。
+- `area`：文字面积、CAD polygon 计算面积、面积偏差。
+- `geometry`：CAD polygon、bbox、坐标单位和 geometry source。
+- `evidence`：CAD 来源文件、label candidate、room candidate、boundary id、源文字。
+- `confidence`：房号、房名、面积、几何和 overall 初始置信度。
+- `issues`：缺失几何、面积偏差、fallback 匹配等问题。
+
+该输出仍是 `cad_auto_draft`，后续必须继续进入 PDF / OCR / 本地 AI 机器校验流程，不能作为最终成果。
+
 ## 项目结构
 
 ```text
@@ -119,7 +140,8 @@ src/room_extractor/
   cad/        DXF 加载、DWG 转换、图层分析、文本/块/多段线提取
   cli/        命令行入口
   config/     图层规则配置
-  extraction/ 房间文字解析、label 聚类、边界识别
+  export/     阶段检查图等导出能力
+  extraction/ 房间文字解析、label 聚类、边界识别、Room JSON 生成
   geometry/   bbox、polygon 面积、IoU 等基础几何能力
   models/     Pydantic 数据模型
   utils/      日志配置等通用工具
@@ -143,6 +165,7 @@ python -m pytest
 - CAD 中文 mojibake 文本恢复
 - 相邻房号、房名、面积聚类为 room label candidate
 - 闭合 CAD polygon 过滤、bbox/面积输出、label 到 polygon 匹配
+- 初始 Room JSON 生成、CAD 面积换算、面积偏差和初始 confidence
 - 几何 bbox、面积、点在 polygon 内、IoU
 
 ## 进展文档
