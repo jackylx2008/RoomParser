@@ -10,9 +10,12 @@
 - `room-extractor extract-cad --dxf <file> --out <file>` 输出 `cad_raw.json`，包含图层、文字、块属性和多段线基础信息。
 - `room-extractor build-room-labels --cad <cad_raw.json> --out <file>` 输出 `room_label_candidates.json`，包含房号、房名、面积和文本聚类结果。
 - `room-extractor build-room-candidates --cad <cad_raw.json> --labels <room_label_candidates.json> --out <file>` 输出 `room_candidates.json`，将房间 label 中心点匹配到闭合 polygon。
+- `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，用于人工看图检查 Phase 3 结果。
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
 
 当前不包含 OCR、VLM、PDF 坐标映射、Streamlit 人工校核界面或正式 Room JSON 生成。
+
+说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试。正式人工校核应放在后续 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
 
 ## 安装
 
@@ -100,6 +103,14 @@ python main.py build-room-candidates --cad data/output/json/cad_raw.json --label
 - 严格匹配：优先房间边界/面积线图层，使用 label 中心点落入 polygon 的最小合适边界。
 - fallback 匹配：普通房间中心点未落入 polygon 时，可按优先边界图层 bbox 距离生成 `matched_fallback`，并写入 `LABEL_OUTSIDE_BOUNDARY_FALLBACK_MATCH`。
 - 特殊空间：客梯、货梯、电梯厅、走道、通道等无面积空间不强行 fallback，标记 `SPECIAL_SPACE_NO_AREA_BOUNDARY` 等待人工确认。
+
+导出阶段检查图：
+
+```powershell
+python main.py export-review-map --cad data/output/json/cad_raw.json --rooms data/output/json/room_candidates.json --out data/output/reports/room_candidates_review.html
+```
+
+检查图是自包含 HTML/SVG 文件，包含浅色 CAD 底图、绿色严格匹配、橙色低置信度匹配、红色未匹配标签和候选列表。它用于 Phase 3 规则验收，不是最终人工校核界面。
 
 ## 项目结构
 

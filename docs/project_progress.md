@@ -13,7 +13,13 @@
 
 ## 当前工作流程
 
-当前项目按 Phase 递进，但每个 Phase 都需要经历“自动实现 -> 真实图纸输出 -> 人工验收 -> 规则回归调整”的闭环。
+当前项目按 Phase 递进，但需要区分“阶段开发验收”和“正式人工校核”。
+
+阶段开发验收用于确认当前 Phase 的中间产物是否可继续下一 Phase。它可以使用 JSON、summary 和可视化检查图，但不等同于最终业务人工校核。
+
+Phase 3 起，人工不直接验收纯 JSON。边界类结果必须生成可视化检查图，将 CAD 底图、识别 polygon、label、状态和 issue 叠加展示，人工据此与图纸轮廓比对。
+
+正式人工校核应放在机器校验之后，即 PDF 矢量文字校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后再进行。
 
 已执行的实际流程：
 
@@ -23,7 +29,7 @@
 4. Phase 2 生成 `room_label_candidates_real.json`。
 5. 人工检查 Phase 2 输出后，确认进入 Phase 3。
 6. Phase 3 生成 `room_candidates_real.json`。
-7. 人工发现未匹配项过多后，回到 Phase 3 调整规则：
+7. 阶段开发验收发现未匹配项过多后，回到 Phase 3 调整规则：
    - 增加 fallback 低置信度匹配。
    - 增加特殊空间分类。
    - 增加具体 issue code。
@@ -34,13 +40,14 @@
 
 1. 每个 Phase 必须有中间 JSON。
 2. 每个 Phase 必须用真实图纸跑通。
-3. 人工验收未通过时，不进入下一 Phase。
-4. 人工反馈先归类为数据修正、规则缺陷或样本沉淀。
+3. 阶段开发验收未通过时，不进入下一 Phase。
+4. 阶段反馈先归类为数据修正、规则缺陷或样本沉淀。
 5. 规则缺陷必须调整代码或配置，并重新生成中间 JSON。
 6. 有复用价值的问题必须补测试或规则说明。
-7. 人工确认结果优先级高于自动规则。
+7. 正式人工校核结果优先级高于自动规则。
+8. 正式人工校核应排在 PDF / OCR / 本地 AI / 置信度评分之后。
 
-流程图：
+阶段开发验收流程图：
 
 ```mermaid
 flowchart TD
@@ -49,18 +56,36 @@ flowchart TD
     C --> D{测试通过?}
     D -- 否 --> B
     D -- 是 --> E[真实图纸生成中间 JSON]
-    E --> F[人工验收]
-    F --> G{验收通过?}
-    G -- 是 --> H[记录阶段状态与输出摘要]
-    H --> I[等待进入下一 Phase]
-    G -- 否 --> J[归类反馈]
-    J --> K{反馈类型}
-    K -- 数据修正 --> L[记录到待校核或人工结果]
-    K -- 规则缺陷 --> M[调整代码或配置]
-    K -- 样本沉淀 --> N[补充测试样例或规则样本]
-    L --> E
-    M --> C
+    E --> F[生成 summary 和可视化检查图]
+    F --> G[阶段开发验收]
+    G --> H{验收通过?}
+    H -- 是 --> I[记录阶段状态与输出摘要]
+    I --> J[等待进入下一 Phase]
+    H -- 否 --> K[归类反馈]
+    K --> L{反馈类型}
+    L -- 数据修正 --> M[记录到后续正式人工校核输入]
+    L -- 规则缺陷 --> N[调整代码或配置]
+    L -- 样本沉淀 --> O[补充测试样例或规则样本]
+    M --> E
     N --> C
+    O --> C
+```
+
+正式机器校验与人工校核流程图：
+
+```mermaid
+flowchart TD
+    A[rooms_auto.json] --> B[PDF 矢量文字校核]
+    B --> C[局部截图生成]
+    C --> D[OCR / 本地 AI 辅助校验]
+    D --> E[置信度评分与 issue 分类]
+    E --> F{高置信度?}
+    F -- 是 --> G[auto_passed]
+    F -- 否 --> H[review_tasks.json]
+    H --> I[正式人工校核界面]
+    I --> J[人工修正文字或 polygon]
+    J --> K[review record / manual polygon]
+    K --> L[rooms_final.json]
 ```
 
 ## 已完成
@@ -166,6 +191,8 @@ flowchart TD
 - 匹配失败时输出 `auto_failed`，并写入具体 issue code。
 - 顶层 `summary` 输出状态、匹配方式和 issue 统计摘要。
 - 输出 `room_candidates.json`。
+- 新增 `export-review-map` 命令，输出 HTML/SVG 阶段检查图。
+- 阶段检查图包含 CAD 线框底图、严格匹配 polygon、fallback polygon、未匹配 label、候选列表和 summary。
 
 ## 真实文件验证
 
@@ -183,6 +210,7 @@ flowchart TD
 - `extract-cad` 成功输出 `data/output/json/cad_raw_real.json`。
 - `build-room-labels` 成功输出 `data/output/json/room_label_candidates_real.json`。
 - `build-room-candidates` 成功输出 `data/output/json/room_candidates_real.json`。
+- `export-review-map` 成功输出 `data/output/reports/room_candidates_review_real.html`。
 
 真实 DXF 统计摘要：
 
@@ -211,6 +239,7 @@ Phase 3 真实输出摘要：
 - 附近有边界但中心点未落入：`2`
 - 同时具备房名、房号、面积且完成严格/fallback 匹配：`54`
 - 输出文件：`data/output/json/room_candidates_real.json`
+- 阶段检查图：`data/output/reports/room_candidates_review_real.html`
 
 ## 当前测试
 

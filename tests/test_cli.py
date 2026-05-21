@@ -159,3 +159,89 @@ def test_cli_build_room_candidates_writes_json(tmp_path: Path) -> None:
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["room_candidates"][0]["status"] == "matched"
     assert payload["room_candidates"][0]["boundary"]["area_cad"] == 4_000_000
+
+
+def test_cli_export_review_map_writes_html(tmp_path: Path) -> None:
+    cad_path = tmp_path / "cad_raw.json"
+    rooms_path = tmp_path / "room_candidates.json"
+    out_path = tmp_path / "review.html"
+    cad_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "layers": [],
+                "texts": [],
+                "blocks": [],
+                "polylines": [
+                    {
+                        "layer": "A-AREA-BNDY",
+                        "entity_type": "LWPOLYLINE",
+                        "closed": True,
+                        "points": [[0, 0], [2000, 0], [2000, 2000], [0, 2000]],
+                        "bbox": [0, 0, 2000, 2000],
+                        "area": 4_000_000,
+                    }
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    boundary = {
+        "boundary_id": "boundary_00001",
+        "source_polyline_index": 0,
+        "layer": "A-AREA-BNDY",
+        "entity_type": "LWPOLYLINE",
+        "polygon_cad": [[0, 0], [2000, 0], [2000, 2000], [0, 2000]],
+        "bbox_cad": [0, 0, 2000, 2000],
+        "area_cad": 4_000_000,
+    }
+    label = {
+        "candidate_id": "label_0001",
+        "room_number": "201",
+        "room_name": "会议室",
+        "area": 35.5,
+        "area_unit": "m2",
+        "center": [1000, 1000],
+        "bbox": [900, 900, 1100, 1100],
+        "source_texts": [],
+        "confidence": 1.0,
+        "issues": [],
+    }
+    rooms_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "label_source_file": "sample.dxf",
+                "summary": {"status_counts": {"matched": 1}, "boundary_candidate_count": 1, "room_candidate_count": 1},
+                "boundary_candidates": [boundary],
+                "room_candidates": [
+                    {
+                        "room_candidate_id": "room_candidate_0001",
+                        "room_number": "201",
+                        "room_name": "会议室",
+                        "area_text": 35.5,
+                        "area_unit": "m2",
+                        "label_center": [1000, 1000],
+                        "label_bbox": [900, 900, 1100, 1100],
+                        "boundary": boundary,
+                        "match_method": "point_in_polygon_smallest_area",
+                        "status": "matched",
+                        "confidence": 1.0,
+                        "label": label,
+                        "issues": [],
+                    }
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["export-review-map", "--cad", str(cad_path), "--rooms", str(rooms_path), "--out", str(out_path)]) == 0
+
+    html = out_path.read_text(encoding="utf-8")
+    assert "<svg" in html
+    assert "会议室" in html
