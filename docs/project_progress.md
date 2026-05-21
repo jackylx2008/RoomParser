@@ -399,6 +399,24 @@ Phase 6 真实输出摘要：
   - `confidence`
   - `notes`
 - 当前阻塞：本机 `http://127.0.0.1:8080/health` 不可用，且工作区当前没有 `common.env/config.yaml`，因此真实模型调用尚未执行。
+- 后续已修正本机 CUDA runtime 路径：`LLAMACPP_EXTRA_DLL_DIRS=../vendor/cuda12`。
+- `llama-server --list-devices` 已确认 `CUDA0: NVIDIA GeForce RTX 5090 D v2` 可见。
+- 日志已确认：
+  - `loaded CUDA backend`
+  - `using device CUDA0`
+  - `offloaded 65/65 layers to GPU`
+  - `clip_ctx: CLIP using CUDA0 backend`
+- 本地 AI 真实全量校验已执行，输出 `data/output/json/rooms_ai_checked_real.json`。
+- 真实 AI 校验摘要：
+  - 输入截图数：`103`
+  - 成功解析 JSON：`102`
+  - 非 JSON / 调用失败：`1`
+  - AI 判定需要后续复核：`76`
+  - AI 判定无需后续复核：`26`
+- 发现问题：
+  - 部分截图仍为空白，说明 PDF bbox / anchor crop 仍需在后续规则中优化。
+  - 部分模型判断存在自我修正式长文本，后续应继续收紧 prompt 或增加结果清洗。
+  - 当前 AI 结果只能作为机器校验输入，不能作为正式人工确认结果。
 
 ## 当前测试
 
@@ -431,7 +449,7 @@ python -m pytest
 
 ## 下一步建议
 
-1. 启动本地 llama.cpp 服务，或提供 `common.env/config.yaml`。
-2. 执行真实本地 AI 校验：`python main.py check-images-ai --rooms data/output/json/rooms_with_review_images_real.json --out data/output/json/rooms_ai_checked_real.json --limit 3`。
-3. 确认真实模型返回 JSON 稳定后，扩大到全部截图。
-4. 将本地 AI 结果用于后续置信度评分、review task 生成和正式人工校核。
+1. 进入置信度评分和 review task 生成阶段。
+2. 将 `rooms_ai_checked_real.json` 中的 `local_ai_check` 与 CAD/PDF issue 合并评分。
+3. 对空白截图、非 JSON、本地 AI 判定需复核、CAD/PDF 不一致的房间生成 `review_tasks.json`。
+4. 在 review task 生成后再进入正式人工校核。

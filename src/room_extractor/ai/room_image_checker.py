@@ -18,51 +18,56 @@ def check_rooms_with_local_ai(
     """Check generated room screenshots with a local multimodal model."""
     checked = rooms_with_images.model_copy(deep=True)
     client = LocalAiClient(config)
+    if not dry_run:
+        client.ensure_server()
     checked_count = 0
     dry_run_count = 0
     failed_count = 0
     review_required_count = 0
-    for room in checked.rooms:
-        if limit is not None and checked_count >= limit:
-            break
-        review_image = room.evidence.pdf_source.get("review_image")
-        if not review_image:
-            continue
-        image_path = Path(str(review_image.get("path", "")))
-        prompt = _build_prompt(room_payload=room.model_dump(mode="json"))
-        try:
-            if dry_run:
-                result = {
-                    "status": "dry_run",
-                    "model": config.model,
-                    "base_url": config.base_url,
-                    "image_path": str(image_path),
-                    "prompt_chars": len(prompt),
-                }
-                dry_run_count += 1
-            else:
-                response = client.chat_with_image(prompt, image_path)
-                result = _parse_model_result(response)
-                if result.get("needs_review") is True:
-                    review_required_count += 1
-                    _append_ai_issue(room, result)
-            room.evidence.pdf_source["local_ai_check"] = result
-            checked_count += 1
-        except (FileNotFoundError, RuntimeError, ValueError) as exc:
-            failed_count += 1
-            room.evidence.pdf_source["local_ai_check"] = {"status": "failed", "message": str(exc)}
-            room.issues.append(
-                Issue(
-                    issue_code="LOCAL_AI_CHECK_FAILED",
-                    severity="medium",
-                    field="pdf_source",
-                    message=str(exc),
-                    need_manual_review=True,
+    try:
+        for room in checked.rooms:
+            if limit is not None and checked_count >= limit:
+                break
+            review_image = room.evidence.pdf_source.get("review_image")
+            if not review_image:
+                continue
+            image_path = Path(str(review_image.get("path", "")))
+            prompt = _build_prompt(room_payload=room.model_dump(mode="json"))
+            try:
+                if dry_run:
+                    result = {
+                        "status": "dry_run",
+                        "model": config.model,
+                        "base_url": config.base_url,
+                        "image_path": str(image_path),
+                        "prompt_chars": len(prompt),
+                    }
+                    dry_run_count += 1
+                else:
+                    response = client.chat_with_image(prompt, image_path)
+                    result = _parse_model_result(response)
+                    if result.get("needs_review") is True:
+                        review_required_count += 1
+                        _append_ai_issue(room, result)
+                room.evidence.pdf_source["local_ai_check"] = result
+                checked_count += 1
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                failed_count += 1
+                room.evidence.pdf_source["local_ai_check"] = {"status": "failed", "message": str(exc)}
+                room.issues.append(
+                    Issue(
+                        issue_code="LOCAL_AI_CHECK_FAILED",
+                        severity="medium",
+                        field="pdf_source",
+                        message=str(exc),
+                        need_manual_review=True,
+                    )
                 )
-            )
-            room.review.required = True
-            room.review.status = "pending_downstream_check"
-            checked_count += 1
+                room.review.required = True
+                room.review.status = "pending_downstream_check"
+                checked_count += 1
+    finally:
+        client.shutdown_server()
     checked.summary = {
         **checked.summary,
         "local_ai_checked": checked_count,

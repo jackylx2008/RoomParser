@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from room_extractor.ai.local_ai_client import LocalAiConfig
+from room_extractor.ai.local_ai_client import _read_config_yaml
 from room_extractor.ai.room_image_checker import check_rooms_with_local_ai
 from room_extractor.models.pdf import PdfTextExtraction
 from room_extractor.models.room import BasicInfo, Evidence, Room
@@ -38,3 +39,26 @@ def test_check_rooms_with_local_ai_dry_run_updates_evidence() -> None:
     assert checked.summary["local_ai_dry_run"] == 1
     assert ai_check["status"] == "dry_run"
     assert ai_check["model"] == "test-model"
+
+
+def test_read_config_yaml_expands_llamacpp_defaults(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "llamacpp:",
+                "  base_url: ${LLAMACPP_BASE_URL:-http://127.0.0.1:8080/v1}",
+                "  model: ${LLAMACPP_MODEL:-local-model}",
+                "  autostart: ${LLAMACPP_AUTOSTART:-true}",
+                "  timeout_sec: ${LLAMACPP_TIMEOUT_SEC:-120}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LLAMACPP_MODEL", "configured-model")
+
+    values = _read_config_yaml(config_path, {})
+
+    assert values["LLAMACPP_BASE_URL"] == "http://127.0.0.1:8080/v1"
+    assert values["LLAMACPP_MODEL"] == "configured-model"
+    assert values["LLAMACPP_AUTOSTART"] == "true"

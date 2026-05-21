@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
@@ -264,37 +265,13 @@ def _run_check_images_ai(args: argparse.Namespace) -> int:
     rooms_with_images = RoomsPdfCheck.model_validate_json(rooms_path.read_text(encoding="utf-8"))
     config = LocalAiConfig.from_env()
     if args.base_url:
-        config = LocalAiConfig(
-            base_url=str(args.base_url).rstrip("/"),
-            model=config.model,
-            timeout_seconds=config.timeout_seconds,
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-        )
+        config = replace(config, base_url=str(args.base_url).rstrip("/"))
     if args.model:
-        config = LocalAiConfig(
-            base_url=config.base_url,
-            model=str(args.model),
-            timeout_seconds=config.timeout_seconds,
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-        )
+        config = replace(config, model=str(args.model))
     if args.timeout_seconds:
-        config = LocalAiConfig(
-            base_url=config.base_url,
-            model=config.model,
-            timeout_seconds=int(args.timeout_seconds),
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-        )
+        config = replace(config, timeout_seconds=int(args.timeout_seconds))
     if args.max_tokens:
-        config = LocalAiConfig(
-            base_url=config.base_url,
-            model=config.model,
-            timeout_seconds=config.timeout_seconds,
-            max_tokens=int(args.max_tokens),
-            temperature=config.temperature,
-        )
+        config = replace(config, max_tokens=int(args.max_tokens))
     result = check_rooms_with_local_ai(
         rooms_with_images,
         config=config,

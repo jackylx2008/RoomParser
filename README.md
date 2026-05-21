@@ -196,6 +196,13 @@ python main.py check-images-ai --rooms data/output/json/rooms_with_review_images
 
 输出写入 `rooms[].evidence.pdf_source.local_ai_check`，真实调用时要求模型只返回 JSON，用于判断截图是否可见、房号 / 房名 / 面积是否匹配、是否需要后续校核。
 
+CUDA 注意事项：
+
+- `LLAMACPP_EXTRA_DLL_DIRS` 必须指向 CUDA runtime DLL 目录。
+- 当前本机目录为 `../vendor/cuda12`，包含 `cudart64_12.dll`、`cublas64_12.dll`、`cublasLt64_12.dll`。
+- 可用 `llama-server.exe --list-devices` 验证，期望看到 `CUDA0` 和 `loaded CUDA backend`。
+- 项目自动启动的 `llama-server` 会在当前命令结束后关闭，命令结束后 GPU-Z / nvidia-smi 看不到进程是正常现象。
+
 ## 项目结构
 
 ```text
