@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import ezdxf
+import fitz
 
 from room_extractor.cad.dwg_converter import DwgConversionResult
 from room_extractor.cli.main import main
@@ -310,3 +311,49 @@ def test_cli_build_rooms_writes_rooms_auto_json(tmp_path: Path) -> None:
     assert payload["rooms"][0]["basic_info"]["room_name"] == "会议室"
     assert payload["rooms"][0]["area"]["calculated_value"] == 25.0
     assert payload["rooms"][0]["geometry"]["geometry_source"] == "cad_auto"
+
+
+def test_cli_check_pdf_writes_checked_json(tmp_path: Path) -> None:
+    rooms_path = tmp_path / "rooms_auto.json"
+    pdf_path = tmp_path / "sample.pdf"
+    out_path = tmp_path / "rooms_pdf_checked.json"
+    doc = fitz.open()
+    page = doc.new_page(width=200, height=200)
+    page.insert_text((70, 70), "201", fontsize=10)
+    page.insert_text((70, 84), "25.0m2", fontsize=10)
+    doc.save(pdf_path)
+    doc.close()
+    rooms_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "summary": {},
+                "rooms": [
+                    {
+                        "room_uid": "sample_r0001",
+                        "basic_info": {"room_number": "201"},
+                        "area": {"text_value": 25.0, "unit": "m2"},
+                        "geometry": {
+                            "polygon_cad": [[0, 0], [100, 0], [100, 100], [0, 100]],
+                            "bbox_cad": [0, 0, 100, 100],
+                            "coordinate_unit": "mm",
+                            "geometry_source": "cad_auto",
+                        },
+                        "confidence": {"room_number": 1.0, "area": 1.0, "geometry": 0.9, "overall": 0.9},
+                        "review": {"required": False, "status": "pending_pdf_check"},
+                        "issues": [],
+                        "final_status": "cad_auto_draft",
+                    }
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["check-pdf", "--rooms", str(rooms_path), "--pdf", str(pdf_path), "--out", str(out_path)]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["checked_with_pdf_bbox"] == 1
+    assert payload["rooms"][0]["evidence"]["pdf_source"]["local_text"] == "201\n25.0m2"

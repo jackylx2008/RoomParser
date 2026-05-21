@@ -1,6 +1,6 @@
 # Building Room Extractor
 
-建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成。
+建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核。
 
 ## 当前能力
 
@@ -12,9 +12,10 @@
 - `room-extractor build-room-candidates --cad <cad_raw.json> --labels <room_label_candidates.json> --out <file>` 输出 `room_candidates.json`，将房间 label 中心点匹配到闭合 polygon。
 - `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，用于人工看图检查 Phase 3 结果。
 - `room-extractor build-rooms --candidates <room_candidates.json> --out <file>` 输出 `rooms_auto.json`，生成 CAD 自动识别版初始 Room JSON。
+- `room-extractor check-pdf --rooms <rooms_auto.json> --pdf <file.pdf> --out <file>` 输出 `rooms_pdf_checked.json`，提取 PDF 矢量文字并对 CAD 房间结果做局部一致性校核。
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
 
-当前不包含 OCR、VLM、PDF 坐标映射、Streamlit 人工校核界面或最终 Room JSON 生成。
+当前不包含局部截图、OCR、VLM、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。
 
 说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试。正式人工校核应放在后续 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
 
@@ -133,6 +134,25 @@ python main.py build-rooms --candidates data/output/json/room_candidates.json --
 
 该输出仍是 `cad_auto_draft`，后续必须继续进入 PDF / OCR / 本地 AI 机器校验流程，不能作为最终成果。
 
+## PDF 矢量文字校核
+
+从 `rooms_auto.json` 和对应 PDF 生成 Phase 5 的机器校核结果：
+
+```powershell
+python main.py check-pdf --rooms data/output/json/rooms_auto.json --pdf data/input/pdf/sample.pdf --out data/output/json/rooms_pdf_checked.json --page 1
+```
+
+输出包括：
+
+- `pdf_text`：PDF 矢量文字及 bbox。
+- `transform`：CAD bbox 到 PDF bbox 的线性映射参数。
+- `rooms[].geometry.bbox_pdf`：映射后的 PDF 局部 bbox。
+- `rooms[].evidence.pdf_source`：PDF 来源文件、页码、局部 bbox、局部文字和文字数量。
+- `issues`：PDF 未找到局部文字、房号 / 房名 / 面积不一致、缺少 CAD geometry 等问题。
+- `confidence.cad_pdf_consistency`：CAD 与 PDF 局部文本一致性分数。
+
+注意：当前 CAD/PDF 坐标映射是基于房间 CAD bbox 外接范围到 PDF 页面外接范围的初版线性拟合，输出会保留 `CAD_PDF_MAPPING_UNVERIFIED` 顶层 issue。它适合作为后续局部截图、OCR / 本地 AI 辅助校验和 review task 生成的输入，不作为最终人工确认结论。
+
 ## 项目结构
 
 ```text
@@ -144,6 +164,7 @@ src/room_extractor/
   extraction/ 房间文字解析、label 聚类、边界识别、Room JSON 生成
   geometry/   bbox、polygon 面积、IoU 等基础几何能力
   models/     Pydantic 数据模型
+  pdf/        PDF 矢量文字提取和 CAD/PDF 局部一致性校核
   utils/      日志配置等通用工具
 tests/        单元测试
 docs/         项目文档
@@ -166,6 +187,8 @@ python -m pytest
 - 相邻房号、房名、面积聚类为 room label candidate
 - 闭合 CAD polygon 过滤、bbox/面积输出、label 到 polygon 匹配
 - 初始 Room JSON 生成、CAD 面积换算、面积偏差和初始 confidence
+- PDF 矢量文字提取、bbox 局部查找、CAD/PDF 字段一致性校核
+- `check-pdf` CLI 输出
 - 几何 bbox、面积、点在 polygon 内、IoU
 
 ## 进展文档

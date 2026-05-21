@@ -10,9 +10,11 @@ from room_extractor import __version__
 from room_extractor.cad import AcCoreConsoleDwgConverter, analyze_layers, convert_dwg_directory, extract_cad_raw, load_dxf
 from room_extractor.export import export_room_candidate_review_html
 from room_extractor.extraction import build_room_candidates, build_room_label_candidates, build_rooms_auto
+from room_extractor.extraction.room_json_builder import RoomsAutoBuild
 from room_extractor.models.drawing import CadRawExtraction
 from room_extractor.models.room_candidate import RoomCandidateSet
 from room_extractor.models.room_label import RoomLabelCandidateSet
+from room_extractor.pdf import check_rooms_against_pdf
 from room_extractor.utils.logger import setup_logger
 
 
@@ -79,6 +81,14 @@ def build_parser() -> argparse.ArgumentParser:
     build_rooms_parser.add_argument("--candidates", required=True, help="Path to Phase 3 room_candidates.json.")
     build_rooms_parser.add_argument("--out", required=True, help="Path to output rooms_auto.json.")
     build_rooms_parser.set_defaults(func=_run_build_rooms)
+
+    check_pdf_parser = subparsers.add_parser("check-pdf", help="Check rooms_auto.json against vector PDF text.")
+    check_pdf_parser.add_argument("--rooms", required=True, help="Path to Phase 4 rooms_auto.json.")
+    check_pdf_parser.add_argument("--pdf", required=True, help="Path to source PDF drawing.")
+    check_pdf_parser.add_argument("--out", required=True, help="Path to output rooms_pdf_checked.json.")
+    check_pdf_parser.add_argument("--page", type=int, default=1, help="1-based PDF page number to check.")
+    check_pdf_parser.add_argument("--margin-ratio", type=float, default=0.2, help="PDF bbox expansion ratio for local text lookup.")
+    check_pdf_parser.set_defaults(func=_run_check_pdf)
 
     return parser
 
@@ -186,6 +196,22 @@ def _run_build_rooms(args: argparse.Namespace) -> int:
     out_path = Path(args.out)
     candidates = RoomCandidateSet.model_validate_json(candidates_path.read_text(encoding="utf-8"))
     result = build_rooms_auto(candidates)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_check_pdf(args: argparse.Namespace) -> int:
+    rooms_path = Path(args.rooms)
+    out_path = Path(args.out)
+    rooms_auto = RoomsAutoBuild.model_validate_json(rooms_path.read_text(encoding="utf-8"))
+    result = check_rooms_against_pdf(
+        rooms_auto,
+        pdf_path=Path(args.pdf),
+        page_number=int(args.page),
+        margin_ratio=float(args.margin_ratio),
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {out_path}")

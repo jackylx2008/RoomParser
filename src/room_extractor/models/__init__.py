@@ -12,6 +12,7 @@ from room_extractor.models.drawing import (
 )
 from room_extractor.models.geometry import Geometry
 from room_extractor.models.issue import Issue
+from room_extractor.models.pdf import PdfPageText, PdfTextExtraction, PdfTextItem
 from room_extractor.models.room_label import RoomLabelCandidate, RoomLabelCandidateSet, RoomTextParse
 from room_extractor.models.review import ReviewChange, ReviewRecord
 from room_extractor.models.room import AreaInfo, BasicInfo, Evidence, ReviewState, Room
@@ -31,6 +32,9 @@ __all__ = [
     "Issue",
     "LayerAnalysis",
     "LayerSummary",
+    "PdfPageText",
+    "PdfTextExtraction",
+    "PdfTextItem",
     "ReviewChange",
     "ReviewRecord",
     "ReviewState",
