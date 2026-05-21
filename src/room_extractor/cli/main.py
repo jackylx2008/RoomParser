@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Sequence
 
 from room_extractor import __version__
+from room_extractor.ai import LocalAiConfig, check_rooms_with_local_ai
 from room_extractor.cad import AcCoreConsoleDwgConverter, analyze_layers, convert_dwg_directory, extract_cad_raw, load_dxf
 from room_extractor.export import export_room_candidate_review_html
 from room_extractor.extraction import build_room_candidates, build_room_label_candidates, build_rooms_auto
@@ -99,6 +100,17 @@ def build_parser() -> argparse.ArgumentParser:
     review_images_parser.add_argument("--margin-ratio", type=float, default=0.2, help="Extra bbox expansion ratio for crop images.")
     review_images_parser.add_argument("--all", action="store_true", help="Render all rooms with PDF bbox, not only review-required rooms.")
     review_images_parser.set_defaults(func=_run_render_review_images)
+
+    ai_parser = subparsers.add_parser("check-images-ai", help="Check review images with a local OpenAI-compatible multimodal model.")
+    ai_parser.add_argument("--rooms", required=True, help="Path to Phase 6 rooms_with_review_images.json.")
+    ai_parser.add_argument("--out", required=True, help="Path to output rooms_ai_checked.json.")
+    ai_parser.add_argument("--limit", type=int, help="Maximum number of review images to check.")
+    ai_parser.add_argument("--dry-run", action="store_true", help="Validate input/output structure without calling the local AI service.")
+    ai_parser.add_argument("--base-url", help="OpenAI-compatible base URL. Defaults to common.env or http://127.0.0.1:8080/v1.")
+    ai_parser.add_argument("--model", help="Model name. Defaults to common.env or local-model.")
+    ai_parser.add_argument("--timeout-seconds", type=int, help="HTTP timeout for model requests.")
+    ai_parser.add_argument("--max-tokens", type=int, help="Maximum response tokens for model requests.")
+    ai_parser.set_defaults(func=_run_check_images_ai)
 
     return parser
 
@@ -239,6 +251,55 @@ def _run_render_review_images(args: argparse.Namespace) -> int:
         dpi=int(args.dpi),
         margin_ratio=float(args.margin_ratio),
         only_review_required=not bool(args.all),
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_check_images_ai(args: argparse.Namespace) -> int:
+    rooms_path = Path(args.rooms)
+    out_path = Path(args.out)
+    rooms_with_images = RoomsPdfCheck.model_validate_json(rooms_path.read_text(encoding="utf-8"))
+    config = LocalAiConfig.from_env()
+    if args.base_url:
+        config = LocalAiConfig(
+            base_url=str(args.base_url).rstrip("/"),
+            model=config.model,
+            timeout_seconds=config.timeout_seconds,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+        )
+    if args.model:
+        config = LocalAiConfig(
+            base_url=config.base_url,
+            model=str(args.model),
+            timeout_seconds=config.timeout_seconds,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+        )
+    if args.timeout_seconds:
+        config = LocalAiConfig(
+            base_url=config.base_url,
+            model=config.model,
+            timeout_seconds=int(args.timeout_seconds),
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+        )
+    if args.max_tokens:
+        config = LocalAiConfig(
+            base_url=config.base_url,
+            model=config.model,
+            timeout_seconds=config.timeout_seconds,
+            max_tokens=int(args.max_tokens),
+            temperature=config.temperature,
+        )
+    result = check_rooms_with_local_ai(
+        rooms_with_images,
+        config=config,
+        limit=args.limit,
+        dry_run=bool(args.dry_run),
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")

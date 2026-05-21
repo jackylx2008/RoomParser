@@ -409,3 +409,41 @@ def test_cli_render_review_images_writes_images_and_json(tmp_path: Path) -> None
     assert payload["summary"]["review_images_anchor_crops"] == 1
     assert review_image["source"] == "pdf_text_anchor_crop"
     assert Path(review_image["path"]).exists()
+
+
+def test_cli_check_images_ai_dry_run_writes_json(tmp_path: Path) -> None:
+    rooms_path = tmp_path / "rooms_with_images.json"
+    out_path = tmp_path / "rooms_ai_checked.json"
+    rooms_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "pdf_source_file": "sample.pdf",
+                "summary": {},
+                "transform": {},
+                "rooms": [
+                    {
+                        "room_uid": "sample_r0001",
+                        "basic_info": {"room_number": "201", "room_name": "会议室"},
+                        "evidence": {
+                            "pdf_source": {
+                                "local_text": "201\n25.0m2",
+                                "review_image": {"path": str(tmp_path / "sample.png")},
+                            }
+                        },
+                        "issues": [],
+                    }
+                ],
+                "pdf_text": {"source_file": "sample.pdf", "pages": []},
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["check-images-ai", "--rooms", str(rooms_path), "--out", str(out_path), "--dry-run", "--limit", "1", "--model", "test-model"]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["local_ai_checked"] == 1
+    assert payload["rooms"][0]["evidence"]["pdf_source"]["local_ai_check"]["status"] == "dry_run"

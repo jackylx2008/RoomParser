@@ -14,9 +14,10 @@
 - `room-extractor build-rooms --candidates <room_candidates.json> --out <file>` 输出 `rooms_auto.json`，生成 CAD 自动识别版初始 Room JSON。
 - `room-extractor check-pdf --rooms <rooms_auto.json> --pdf <file.pdf> --out <file>` 输出 `rooms_pdf_checked.json`，提取 PDF 矢量文字并对 CAD 房间结果做局部一致性校核。
 - `room-extractor render-review-images --rooms <rooms_pdf_checked.json> --pdf <file.pdf> --output-dir <dir> --out <file>` 输出带截图 evidence 的 JSON，并为低置信度房间生成 PDF 局部 PNG。
+- `room-extractor check-images-ai --rooms <rooms_with_review_images.json> --out <file>` 调用本地 OpenAI 兼容多模态模型，对局部截图做辅助校核；支持 `--dry-run` 验证输入输出结构。
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
 
-当前不包含 OCR、VLM、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。
+当前不包含 OCR、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。本地 AI 命令已接入 OpenAI 兼容接口，真实调用需要先启动本地 llama.cpp 服务并准备 `common.env`。
 
 说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试。正式人工校核应放在后续 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
 
@@ -173,10 +174,33 @@ python main.py render-review-images --rooms data/output/json/rooms_pdf_checked.j
 
 说明：渲染时会把 PDF 页面统一到未旋转坐标系，避免带旋转页面的 bbox 与截图错位。若房号能在 PDF 矢量文字中匹配，会优先以房号位置生成 anchor crop，让截图更容易看到房间标签和周边边界；否则退回 PDF bbox crop。
 
+## 本地 AI 辅助校验
+
+从 `rooms_with_review_images.json` 调用本地 OpenAI 兼容多模态模型：
+
+```powershell
+python main.py check-images-ai --rooms data/output/json/rooms_with_review_images.json --out data/output/json/rooms_ai_checked.json --limit 3
+```
+
+如果本地模型服务尚未启动，可先验证结构：
+
+```powershell
+python main.py check-images-ai --rooms data/output/json/rooms_with_review_images.json --out data/output/json/rooms_ai_checked_dry_run.json --dry-run --limit 3
+```
+
+配置读取顺序：
+
+- `common.env` 中的 `LLAMACPP_BASE_URL`、`LLAMACPP_MODEL`、`LLAMACPP_TIMEOUT_SECONDS`、`LLAMACPP_MAX_TOKENS`。
+- 进程环境变量。
+- CLI 参数 `--base-url`、`--model`、`--timeout-seconds`、`--max-tokens` 覆盖默认值。
+
+输出写入 `rooms[].evidence.pdf_source.local_ai_check`，真实调用时要求模型只返回 JSON，用于判断截图是否可见、房号 / 房名 / 面积是否匹配、是否需要后续校核。
+
 ## 项目结构
 
 ```text
 src/room_extractor/
+  ai/         本地 OpenAI 兼容多模态模型客户端和截图校核流程
   cad/        DXF 加载、DWG 转换、图层分析、文本/块/多段线提取
   cli/        命令行入口
   config/     图层规则配置
@@ -211,6 +235,8 @@ python -m pytest
 - `check-pdf` CLI 输出
 - PDF 局部截图渲染、旋转页面处理、基于房号的 anchor crop
 - `render-review-images` CLI 输出
+- 本地 AI 截图校核 dry-run 结构验证
+- `check-images-ai` CLI 输出
 - 几何 bbox、面积、点在 polygon 内、IoU
 
 ## 进展文档
