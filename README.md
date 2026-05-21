@@ -1,6 +1,6 @@
 # Building Room Extractor
 
-建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核。
+建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5 / Phase 6：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核、PDF 局部截图生成。
 
 ## 当前能力
 
@@ -13,9 +13,10 @@
 - `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，用于人工看图检查 Phase 3 结果。
 - `room-extractor build-rooms --candidates <room_candidates.json> --out <file>` 输出 `rooms_auto.json`，生成 CAD 自动识别版初始 Room JSON。
 - `room-extractor check-pdf --rooms <rooms_auto.json> --pdf <file.pdf> --out <file>` 输出 `rooms_pdf_checked.json`，提取 PDF 矢量文字并对 CAD 房间结果做局部一致性校核。
+- `room-extractor render-review-images --rooms <rooms_pdf_checked.json> --pdf <file.pdf> --output-dir <dir> --out <file>` 输出带截图 evidence 的 JSON，并为低置信度房间生成 PDF 局部 PNG。
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
 
-当前不包含局部截图、OCR、VLM、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。
+当前不包含 OCR、VLM、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。
 
 说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试。正式人工校核应放在后续 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
 
@@ -153,6 +154,25 @@ python main.py check-pdf --rooms data/output/json/rooms_auto.json --pdf data/inp
 
 注意：当前 CAD/PDF 坐标映射是基于房间 CAD bbox 外接范围到 PDF 页面外接范围的初版线性拟合，输出会保留 `CAD_PDF_MAPPING_UNVERIFIED` 顶层 issue。它适合作为后续局部截图、OCR / 本地 AI 辅助校验和 review task 生成的输入，不作为最终人工确认结论。
 
+## PDF 局部截图
+
+从 `rooms_pdf_checked.json` 生成 Phase 6 的局部截图，并把截图 evidence 写回 JSON：
+
+```powershell
+python main.py render-review-images --rooms data/output/json/rooms_pdf_checked.json --pdf data/input/pdf/sample.pdf --output-dir data/output/review_images/sample --out data/output/json/rooms_with_review_images.json --dpi 200
+```
+
+输出包括：
+
+- `rooms[].evidence.pdf_source.review_image.path`：局部 PNG 路径。
+- `crop_bbox`：PDF 裁剪坐标。
+- `dpi` 和 `margin_ratio`：截图渲染参数。
+- `source`：`pdf_bbox_crop` 或 `pdf_text_anchor_crop`。
+- `summary.review_images_rendered`：实际生成截图数。
+- `summary.review_images_skipped_no_bbox`：因缺少 PDF bbox 跳过的房间数。
+
+说明：渲染时会把 PDF 页面统一到未旋转坐标系，避免带旋转页面的 bbox 与截图错位。若房号能在 PDF 矢量文字中匹配，会优先以房号位置生成 anchor crop，让截图更容易看到房间标签和周边边界；否则退回 PDF bbox crop。
+
 ## 项目结构
 
 ```text
@@ -189,6 +209,8 @@ python -m pytest
 - 初始 Room JSON 生成、CAD 面积换算、面积偏差和初始 confidence
 - PDF 矢量文字提取、bbox 局部查找、CAD/PDF 字段一致性校核
 - `check-pdf` CLI 输出
+- PDF 局部截图渲染、旋转页面处理、基于房号的 anchor crop
+- `render-review-images` CLI 输出
 - 几何 bbox、面积、点在 polygon 内、IoU
 
 ## 进展文档

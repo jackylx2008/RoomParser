@@ -14,7 +14,7 @@ from room_extractor.extraction.room_json_builder import RoomsAutoBuild
 from room_extractor.models.drawing import CadRawExtraction
 from room_extractor.models.room_candidate import RoomCandidateSet
 from room_extractor.models.room_label import RoomLabelCandidateSet
-from room_extractor.pdf import check_rooms_against_pdf
+from room_extractor.pdf import RoomsPdfCheck, check_rooms_against_pdf, render_review_images
 from room_extractor.utils.logger import setup_logger
 
 
@@ -89,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     check_pdf_parser.add_argument("--page", type=int, default=1, help="1-based PDF page number to check.")
     check_pdf_parser.add_argument("--margin-ratio", type=float, default=0.2, help="PDF bbox expansion ratio for local text lookup.")
     check_pdf_parser.set_defaults(func=_run_check_pdf)
+
+    review_images_parser = subparsers.add_parser("render-review-images", help="Render PDF crop images for downstream room review.")
+    review_images_parser.add_argument("--rooms", required=True, help="Path to Phase 5 rooms_pdf_checked.json.")
+    review_images_parser.add_argument("--pdf", required=True, help="Path to source PDF drawing.")
+    review_images_parser.add_argument("--output-dir", required=True, help="Directory for generated PNG crop images.")
+    review_images_parser.add_argument("--out", required=True, help="Path to output rooms_with_review_images.json.")
+    review_images_parser.add_argument("--dpi", type=int, default=200, help="Render DPI for crop images.")
+    review_images_parser.add_argument("--margin-ratio", type=float, default=0.2, help="Extra bbox expansion ratio for crop images.")
+    review_images_parser.add_argument("--all", action="store_true", help="Render all rooms with PDF bbox, not only review-required rooms.")
+    review_images_parser.set_defaults(func=_run_render_review_images)
 
     return parser
 
@@ -211,6 +221,24 @@ def _run_check_pdf(args: argparse.Namespace) -> int:
         pdf_path=Path(args.pdf),
         page_number=int(args.page),
         margin_ratio=float(args.margin_ratio),
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_render_review_images(args: argparse.Namespace) -> int:
+    rooms_path = Path(args.rooms)
+    out_path = Path(args.out)
+    rooms_pdf_checked = RoomsPdfCheck.model_validate_json(rooms_path.read_text(encoding="utf-8"))
+    result = render_review_images(
+        rooms_pdf_checked,
+        pdf_path=Path(args.pdf),
+        output_dir=Path(args.output_dir),
+        dpi=int(args.dpi),
+        margin_ratio=float(args.margin_ratio),
+        only_review_required=not bool(args.all),
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")

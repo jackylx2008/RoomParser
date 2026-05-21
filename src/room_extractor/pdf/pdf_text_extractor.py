@@ -15,6 +15,8 @@ def extract_pdf_text(pdf_path: str | Path) -> PdfTextExtraction:
     pages: list[PdfPageText] = []
     with fitz.open(path) as doc:
         for page_index, page in enumerate(doc):
+            if page.rotation:
+                page.set_rotation(0)
             rect = page.rect
             texts = [
                 PdfTextItem(

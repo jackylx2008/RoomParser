@@ -357,3 +357,55 @@ def test_cli_check_pdf_writes_checked_json(tmp_path: Path) -> None:
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["summary"]["checked_with_pdf_bbox"] == 1
     assert payload["rooms"][0]["evidence"]["pdf_source"]["local_text"] == "201\n25.0m2"
+
+
+def test_cli_render_review_images_writes_images_and_json(tmp_path: Path) -> None:
+    rooms_path = tmp_path / "rooms_auto.json"
+    checked_path = tmp_path / "rooms_pdf_checked.json"
+    out_path = tmp_path / "rooms_with_images.json"
+    image_dir = tmp_path / "review_images"
+    pdf_path = tmp_path / "sample.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=200, height=200)
+    page.insert_text((70, 70), "201", fontsize=10)
+    page.insert_text((70, 84), "25.0m2", fontsize=10)
+    doc.save(pdf_path)
+    doc.close()
+    rooms_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "summary": {},
+                "rooms": [
+                    {
+                        "room_uid": "sample_r0001",
+                        "basic_info": {"room_number": "201"},
+                        "area": {"text_value": 30.0, "unit": "m2"},
+                        "geometry": {
+                            "polygon_cad": [[0, 0], [100, 0], [100, 100], [0, 100]],
+                            "bbox_cad": [0, 0, 100, 100],
+                            "coordinate_unit": "mm",
+                            "geometry_source": "cad_auto",
+                        },
+                        "confidence": {"room_number": 1.0, "area": 1.0, "geometry": 0.9, "overall": 0.9},
+                        "review": {"required": False, "status": "pending_pdf_check"},
+                        "issues": [],
+                        "final_status": "cad_auto_draft",
+                    }
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    assert main(["check-pdf", "--rooms", str(rooms_path), "--pdf", str(pdf_path), "--out", str(checked_path)]) == 0
+
+    assert main(["render-review-images", "--rooms", str(checked_path), "--pdf", str(pdf_path), "--output-dir", str(image_dir), "--out", str(out_path), "--dpi", "72"]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    review_image = payload["rooms"][0]["evidence"]["pdf_source"]["review_image"]
+    assert payload["summary"]["review_images_rendered"] == 1
+    assert payload["summary"]["review_images_anchor_crops"] == 1
+    assert review_image["source"] == "pdf_text_anchor_crop"
+    assert Path(review_image["path"]).exists()
