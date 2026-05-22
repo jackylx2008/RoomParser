@@ -18,6 +18,12 @@ wall_layers:
   - 墙
   - WALL
 
+axis_layers:
+  - A-AXIS
+  - A-GRID
+  - 轴网
+  - 轴线
+
 ignore_layers:
   - A-AXIS
   - A-DIMS
@@ -35,4 +41,3 @@ confidence_threshold:
   auto_pass: 0.85
   geometry_min: 0.80
   area_deviation_percent: 5.0
-

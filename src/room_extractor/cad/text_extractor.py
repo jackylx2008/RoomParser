@@ -9,12 +9,15 @@ from room_extractor.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def extract_texts(doc: DxfDrawing) -> tuple[list[CadTextEntity], list[Issue]]:
+def extract_texts(doc: DxfDrawing, layers: list[str] | None = None) -> tuple[list[CadTextEntity], list[Issue]]:
     """Extract TEXT and MTEXT entities from modelspace."""
     texts: list[CadTextEntity] = []
     issues: list[Issue] = []
+    allowed_layers = {layer.upper() for layer in layers} if layers else None
     for entity in doc.modelspace():
         if entity.dxftype() not in {"TEXT", "MTEXT"}:
+            continue
+        if allowed_layers is not None and str(getattr(entity.dxf, "layer", "0")).upper() not in allowed_layers:
             continue
         try:
             texts.append(_extract_text_entity(entity))

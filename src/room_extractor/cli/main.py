@@ -10,13 +10,15 @@ from typing import Sequence
 from room_extractor import __version__
 from room_extractor.ai import LocalAiConfig, check_rooms_with_local_ai
 from room_extractor.cad import AcCoreConsoleDwgConverter, analyze_layers, convert_dwg_directory, extract_cad_raw, load_dxf
-from room_extractor.export import export_room_candidate_review_html
+from room_extractor.config.axis_rules import load_axis_layer_rules
+from room_extractor.export import export_recognized_rooms_html, export_review_task_html, export_room_candidate_review_html
 from room_extractor.extraction import build_room_candidates, build_room_label_candidates, build_rooms_auto
 from room_extractor.extraction.room_json_builder import RoomsAutoBuild
 from room_extractor.models.drawing import CadRawExtraction
 from room_extractor.models.room_candidate import RoomCandidateSet
 from room_extractor.models.room_label import RoomLabelCandidateSet
 from room_extractor.pdf import RoomsPdfCheck, check_rooms_against_pdf, render_review_images
+from room_extractor.review import build_review_tasks
 from room_extractor.utils.logger import setup_logger
 
 
@@ -33,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser = subparsers.add_parser("extract-cad", help="Extract raw CAD entities to JSON.")
     extract_parser.add_argument("--dxf", required=True, help="Path to the input DXF file.")
     extract_parser.add_argument("--out", required=True, help="Path to the output cad_raw.json file.")
+    extract_parser.add_argument("--axis-only", action="store_true", help="Only extract configured axis lines and axis label texts.")
+    extract_parser.add_argument("--axis-rules", help="Path to axis layer YAML. Defaults to config/axis_layer_rules.yaml.")
     extract_parser.set_defaults(func=_run_extract_cad)
 
     convert_parser = subparsers.add_parser("convert-dwg", help="Convert DWG files to DXF with AcCoreConsole.")
@@ -113,6 +117,29 @@ def build_parser() -> argparse.ArgumentParser:
     ai_parser.add_argument("--max-tokens", type=int, help="Maximum response tokens for model requests.")
     ai_parser.set_defaults(func=_run_check_images_ai)
 
+    review_tasks_parser = subparsers.add_parser("build-review-tasks", help="Build formal manual review tasks after machine checks.")
+    review_tasks_parser.add_argument("--rooms", required=True, help="Path to rooms_ai_checked.json.")
+    review_tasks_parser.add_argument("--out", required=True, help="Path to output review_tasks.json.")
+    review_tasks_parser.set_defaults(func=_run_build_review_tasks)
+
+    review_tasks_html_parser = subparsers.add_parser(
+        "export-review-tasks-html",
+        help="Export a formal manual review HTML after PDF/OCR/AI machine checks.",
+    )
+    review_tasks_html_parser.add_argument("--tasks", required=True, help="Path to review_tasks.json.")
+    review_tasks_html_parser.add_argument("--out", required=True, help="Path to output HTML review queue.")
+    review_tasks_html_parser.add_argument("--title", default="正式人工审核任务", help="HTML report title.")
+    review_tasks_html_parser.set_defaults(func=_run_export_review_tasks_html)
+
+    rooms_html_parser = subparsers.add_parser(
+        "export-rooms-html",
+        help="Export an HTML overview of recognized rooms with overview map and per-room images.",
+    )
+    rooms_html_parser.add_argument("--rooms", required=True, help="Path to rooms_ai_checked.json or rooms_with_review_images.json.")
+    rooms_html_parser.add_argument("--out", required=True, help="Path to output HTML room overview.")
+    rooms_html_parser.add_argument("--title", default="识别房间总览", help="HTML report title.")
+    rooms_html_parser.set_defaults(func=_run_export_rooms_html)
+
     return parser
 
 
@@ -139,7 +166,8 @@ def _run_extract_cad(args: argparse.Namespace) -> int:
     dxf_path = Path(args.dxf)
     out_path = Path(args.out)
     doc = load_dxf(dxf_path)
-    result = extract_cad_raw(doc, dxf_path)
+    axis_rules = load_axis_layer_rules(args.axis_rules) if bool(args.axis_only) else None
+    result = extract_cad_raw(doc, dxf_path, axis_only=bool(args.axis_only), axis_rules=axis_rules)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {out_path}")
@@ -280,6 +308,35 @@ def _run_check_images_ai(args: argparse.Namespace) -> int:
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_build_review_tasks(args: argparse.Namespace) -> int:
+    rooms_path = Path(args.rooms)
+    out_path = Path(args.out)
+    rooms_ai_checked = RoomsPdfCheck.model_validate_json(rooms_path.read_text(encoding="utf-8"))
+    result = build_review_tasks(rooms_ai_checked)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_export_review_tasks_html(args: argparse.Namespace) -> int:
+    from room_extractor.models.review_task import ReviewTaskSet
+
+    tasks_path = Path(args.tasks)
+    tasks = ReviewTaskSet.model_validate_json(tasks_path.read_text(encoding="utf-8"))
+    out_path = export_review_task_html(tasks, out_path=args.out, title=str(args.title))
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_export_rooms_html(args: argparse.Namespace) -> int:
+    rooms_path = Path(args.rooms)
+    rooms_checked = RoomsPdfCheck.model_validate_json(rooms_path.read_text(encoding="utf-8"))
+    out_path = export_recognized_rooms_html(rooms_checked, out_path=args.out, title=str(args.title))
     print(f"Wrote {out_path}")
     return 0
 

@@ -18,6 +18,7 @@ def test_cli_extract_cad_writes_json(tmp_path: Path) -> None:
     text = msp.add_text("办公室", dxfattribs={"layer": "A-ROOM-TEXT", "height": 350})
     text.dxf.insert = (1, 2)
     msp.add_lwpolyline([(0, 0), (1, 0), (1, 1), (0, 1)], close=True)
+    msp.add_line((0, 2), (1, 2), dxfattribs={"layer": "A-AXIS"})
     doc.saveas(dxf_path)
 
     assert main(["extract-cad", "--dxf", str(dxf_path), "--out", str(out_path)]) == 0
@@ -26,6 +27,49 @@ def test_cli_extract_cad_writes_json(tmp_path: Path) -> None:
     assert payload["source_file"] == "sample.dxf"
     assert payload["texts"][0]["text"] == "办公室"
     assert payload["polylines"][0]["closed"] is True
+    assert payload["axes"][0]["layer"] == "A-AXIS"
+    assert payload["axes"][0]["points"] == [[0.0, 2.0], [1.0, 2.0]]
+
+
+def test_cli_extract_cad_axis_only_uses_axis_rules(tmp_path: Path) -> None:
+    dxf_path = tmp_path / "sample_axis.dxf"
+    out_path = tmp_path / "cad_raw_axis.json"
+    rules_path = tmp_path / "axis_rules.yaml"
+    rules_path.write_text("axis_layers:\n  - A-GRID\naxis_label_layers:\n  - A-ANNO-TXT\n", encoding="utf-8")
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (10, 0), dxfattribs={"layer": "A-GRID"})
+    label = msp.add_text("1", dxfattribs={"layer": "A-ANNO-TXT", "height": 350})
+    label.dxf.insert = (11, 0)
+    junk = msp.add_text("垃圾", dxfattribs={"layer": "A-DOORS_TEXT", "height": 350})
+    junk.dxf.insert = (5, 5)
+    msp.add_lwpolyline([(0, 0), (1, 0), (1, 1), (0, 1)], close=True, dxfattribs={"layer": "A-AREA-BNDY"})
+    doc.blocks.new("JUNK_BLOCK")
+    msp.add_blockref("JUNK_BLOCK", (0, 0), dxfattribs={"layer": "A-DOORS_TEXT"})
+    doc.saveas(dxf_path)
+
+    assert (
+        main(
+            [
+                "extract-cad",
+                "--dxf",
+                str(dxf_path),
+                "--out",
+                str(out_path),
+                "--axis-only",
+                "--axis-rules",
+                str(rules_path),
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert [axis["layer"] for axis in payload["axes"]] == ["A-GRID"]
+    assert [text["text"] for text in payload["texts"]] == ["1"]
+    assert payload["blocks"] == []
+    assert payload["polylines"] == []
+    assert {layer["name"] for layer in payload["layers"]} == {"A-GRID", "A-ANNO-TXT"}
 
 
 def test_cli_rejects_non_dxf_file(tmp_path: Path, capsys) -> None:
@@ -447,3 +491,105 @@ def test_cli_check_images_ai_dry_run_writes_json(tmp_path: Path) -> None:
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["summary"]["local_ai_checked"] == 1
     assert payload["rooms"][0]["evidence"]["pdf_source"]["local_ai_check"]["status"] == "dry_run"
+
+
+def test_cli_build_review_tasks_writes_json(tmp_path: Path) -> None:
+    rooms_path = tmp_path / "rooms_ai_checked.json"
+    out_path = tmp_path / "review_tasks.json"
+    rooms_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "pdf_source_file": "sample.pdf",
+                "summary": {},
+                "transform": {},
+                "rooms": [
+                    {
+                        "room_uid": "sample_r0001",
+                        "basic_info": {"floor": "L2", "room_number": "201", "room_name": "会议室"},
+                        "area": {"text_value": 25.0, "unit": "m2"},
+                        "geometry": {
+                            "polygon_cad": [[0, 0], [10, 0], [10, 10], [0, 10]],
+                            "bbox_cad": [0, 0, 10, 10],
+                            "bbox_pdf": [1, 1, 2, 2],
+                        },
+                        "evidence": {
+                            "pdf_source": {
+                                "review_image": {"path": "review.png"},
+                                "local_ai_check": {"status": "ok", "needs_review": True, "area_match": False, "notes": "面积不一致"},
+                            }
+                        },
+                        "review": {"required": True, "status": "pending_downstream_check"},
+                        "issues": [
+                            {
+                                "issue_code": "PDF_AREA_MISMATCH",
+                                "severity": "medium",
+                                "field": "area",
+                                "message": "面积不一致",
+                                "need_manual_review": True,
+                            }
+                        ],
+                    }
+                ],
+                "pdf_text": {"source_file": "sample.pdf", "pages": []},
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["build-review-tasks", "--rooms", str(rooms_path), "--out", str(out_path)]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["task_count"] == 1
+    assert payload["tasks"][0]["review_image_path"] == "review.png"
+    assert "area" in payload["tasks"][0]["suggested_fields"]
+
+
+def test_cli_export_rooms_html_writes_html(tmp_path: Path) -> None:
+    rooms_path = tmp_path / "rooms_ai_checked.json"
+    out_path = tmp_path / "recognized_rooms.html"
+    rooms_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "pdf_source_file": "sample.pdf",
+                "summary": {},
+                "transform": {},
+                "rooms": [
+                    {
+                        "room_uid": "sample_r0001",
+                        "basic_info": {"floor": "L2", "room_number": "201", "room_name": "会议室"},
+                        "area": {"text_value": 25.0, "unit": "m2"},
+                        "geometry": {
+                            "polygon_cad": [[0, 0], [10, 0], [10, 10], [0, 10]],
+                            "bbox_cad": [0, 0, 10, 10],
+                            "geometry_source": "cad_auto",
+                        },
+                        "evidence": {
+                            "pdf_source": {
+                                "local_text": "会议室 201",
+                                "review_image": {"path": "review.png"},
+                                "local_ai_check": {"status": "ok", "needs_review": False},
+                            }
+                        },
+                        "review": {"required": False, "status": "auto_passed"},
+                        "issues": [],
+                    }
+                ],
+                "pdf_text": {"source_file": "sample.pdf", "pages": []},
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["export-rooms-html", "--rooms", str(rooms_path), "--out", str(out_path)]) == 0
+
+    html = out_path.read_text(encoding="utf-8")
+    assert "识别房间总览" in html
+    assert "overview-map" in html
+    assert "房间分图" in html
+    assert "会议室" in html

@@ -2,6 +2,7 @@
 
 from room_extractor.models.confidence import Confidence
 from room_extractor.models.drawing import (
+    CadAxisEntity,
     CadBlockEntity,
     CadPolylineEntity,
     CadRawExtraction,
@@ -15,12 +16,14 @@ from room_extractor.models.issue import Issue
 from room_extractor.models.pdf import PdfPageText, PdfTextExtraction, PdfTextItem
 from room_extractor.models.room_label import RoomLabelCandidate, RoomLabelCandidateSet, RoomTextParse
 from room_extractor.models.review import ReviewChange, ReviewRecord
+from room_extractor.models.review_task import ReviewTask, ReviewTaskSet
 from room_extractor.models.room import AreaInfo, BasicInfo, Evidence, ReviewState, Room
 from room_extractor.models.room_candidate import RoomBoundaryCandidate, RoomCandidate, RoomCandidateSet
 
 __all__ = [
     "AreaInfo",
     "BasicInfo",
+    "CadAxisEntity",
     "CadBlockEntity",
     "CadPolylineEntity",
     "CadRawExtraction",
@@ -37,6 +40,8 @@ __all__ = [
     "PdfTextItem",
     "ReviewChange",
     "ReviewRecord",
+    "ReviewTask",
+    "ReviewTaskSet",
     "ReviewState",
     "Room",
     "RoomBoundaryCandidate",

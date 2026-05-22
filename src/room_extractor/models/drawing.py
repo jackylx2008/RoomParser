@@ -64,6 +64,16 @@ class CadPolylineEntity(BaseModel):
     area: float | None = None
 
 
+class CadAxisEntity(BaseModel):
+    """Raw axis/grid line entity extracted from DXF axis layers."""
+
+    layer: str
+    entity_type: str
+    points: list[Point] = Field(default_factory=list)
+    bbox: BBox | None = None
+    length: float | None = None
+
+
 class CadRawExtraction(BaseModel):
     """Phase 1 raw CAD extraction JSON."""
 
@@ -72,6 +82,7 @@ class CadRawExtraction(BaseModel):
     texts: list[CadTextEntity] = Field(default_factory=list)
     blocks: list[CadBlockEntity] = Field(default_factory=list)
     polylines: list[CadPolylineEntity] = Field(default_factory=list)
+    axes: list[CadAxisEntity] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
 
 
@@ -82,4 +93,3 @@ class Drawing(BaseModel):
     source_file: str
     file_type: str = "dxf"
     metadata: dict[str, Any] = Field(default_factory=dict)
-

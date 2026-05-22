@@ -1,0 +1,5 @@
+axis_layers:
+  - A-GRID
+
+axis_label_layers:
+  - A-ANNO-TXT

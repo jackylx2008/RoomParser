@@ -26,12 +26,22 @@ def test_dxf_phase1_extraction(tmp_path: Path) -> None:
     assert raw.polylines[0].closed is True
     assert raw.polylines[0].bbox == (0.0, 0.0, 10.0, 10.0)
     assert raw.polylines[0].area == 100.0
+    assert len(raw.axes) == 2
+    assert raw.axes[0].layer == "A-AXIS"
+    assert raw.axes[0].entity_type == "LINE"
+    assert raw.axes[0].points == [(0.0, -5.0), (10.0, -5.0)]
+    assert raw.axes[0].bbox == (0.0, -5.0, 10.0, -5.0)
+    assert raw.axes[0].length == 10.0
+    assert raw.axes[1].entity_type == "ARC"
+    assert len(raw.axes[1].points) >= 17
+    assert raw.axes[1].length is not None
 
 
 def _build_sample_dxf(path: Path) -> Path:
     doc = ezdxf.new()
     doc.layers.add("A-ROOM-TEXT")
     doc.layers.add("A-ROOM-BOUNDARY")
+    doc.layers.add("A-AXIS")
     msp = doc.modelspace()
 
     text = msp.add_text("办公室", dxfattribs={"layer": "A-ROOM-TEXT", "height": 350, "rotation": 0})
@@ -47,6 +57,21 @@ def _build_sample_dxf(path: Path) -> Path:
         [(0, 0), (10, 0), (10, 10), (0, 10)],
         close=True,
         dxfattribs={"layer": "A-ROOM-BOUNDARY"},
+    )
+    msp.add_line((0, -5), (10, -5), dxfattribs={"layer": "A-AXIS"})
+    msp.add_arc(
+        center=(5, -5),
+        radius=5,
+        start_angle=0,
+        end_angle=90,
+        dxfattribs={"layer": "A-AXIS"},
+    )
+    msp.add_arc(
+        center=(15, -5),
+        radius=5,
+        start_angle=90,
+        end_angle=180,
+        dxfattribs={"layer": "A-AXIS"},
     )
 
     doc.saveas(path)

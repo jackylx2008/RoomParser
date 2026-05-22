@@ -1,25 +1,30 @@
 # Building Room Extractor
 
-建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5 / Phase 6：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核、PDF 局部截图生成。
+建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5 / Phase 6：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、轴线 JSON 提取与校核、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核、PDF 局部截图生成。
 
 ## 当前能力
 
 - `room-extractor --version` 输出版本号。
 - `room-extractor convert-dwg` 使用本机 AutoCAD `AcCoreConsole.exe` 无界面批量转换 DWG 为 DXF。
 - `room-extractor analyze-layers --dxf <file>` 输出 DXF 图层清单和实体统计。
-- `room-extractor extract-cad --dxf <file> --out <file>` 输出 `cad_raw.json`，包含图层、文字、块属性和多段线基础信息。
+- `room-extractor extract-cad --dxf <file> --out <file>` 输出 `cad_raw.json`，包含图层、文字、块属性、多段线和轴网线基础信息。
+- `room-extractor extract-cad --dxf <file> --out <file> --axis-only` 仅按轴线规则输出轴线和轴号图层信息，适合生成轴线专项校核 JSON。
 - `room-extractor build-room-labels --cad <cad_raw.json> --out <file>` 输出 `room_label_candidates.json`，包含房号、房名、面积和文本聚类结果。
 - `room-extractor build-room-candidates --cad <cad_raw.json> --labels <room_label_candidates.json> --out <file>` 输出 `room_candidates.json`，将房间 label 中心点匹配到闭合 polygon。
-- `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，用于人工看图检查 Phase 3 结果。
+- `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，仅用于 Phase 3 规则诊断。
 - `room-extractor build-rooms --candidates <room_candidates.json> --out <file>` 输出 `rooms_auto.json`，生成 CAD 自动识别版初始 Room JSON。
 - `room-extractor check-pdf --rooms <rooms_auto.json> --pdf <file.pdf> --out <file>` 输出 `rooms_pdf_checked.json`，提取 PDF 矢量文字并对 CAD 房间结果做局部一致性校核。
 - `room-extractor render-review-images --rooms <rooms_pdf_checked.json> --pdf <file.pdf> --output-dir <dir> --out <file>` 输出带截图 evidence 的 JSON，并为低置信度房间生成 PDF 局部 PNG。
 - `room-extractor check-images-ai --rooms <rooms_with_review_images.json> --out <file>` 调用本地 OpenAI 兼容多模态模型，对局部截图做辅助校核；支持 `--dry-run` 验证输入输出结构。
+- `room-extractor build-review-tasks --rooms <rooms_ai_checked.json> --out <file>` 输出 PDF / OCR / AI 机器校核后的正式人工审核任务池。
+- `room-extractor export-review-tasks-html --tasks <review_tasks.json> --out <file>` 输出正式人工审核 HTML，展示截图、字段、AI 判断和 issue。
+- `room-extractor export-rooms-html --rooms <rooms_ai_checked.json> --out <file>` 输出识别房间总览 HTML，包含总图和每个房间的分图。
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
+- 根目录入口 `python validate_json_html.py --json <file> --out <file>` 可生成 `JSON人工校核` HTML，支持多个 JSON 叠加显示和开关控制。
 
 当前不包含 OCR、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。本地 AI 命令已接入 OpenAI 兼容接口，真实调用需要先启动本地 llama.cpp 服务并准备 `common.env`。
 
-说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试。正式人工校核应放在后续 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
+说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试，已从正式人工审核链路中剔除。正式人工校核应使用 `review_tasks.json` 和 `export-review-tasks-html` 生成的 HTML，放在 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
 
 ## 安装
 
@@ -62,6 +67,28 @@ python main.py analyze-layers --dxf data/input/dxf/sample.dxf
 python main.py extract-cad --dxf data/input/dxf/sample.dxf --out data/output/json/cad_raw.json
 ```
 
+仅提取轴线专项 JSON：
+
+```powershell
+python main.py extract-cad --dxf data/input/dxf/sample.dxf --out data/output/json/cad_raw_axis_check.json --axis-only
+```
+
+轴线专项提取默认读取 `src/room_extractor/config/axis_layer_rules.yaml`：
+
+```yaml
+axis_layers:
+  - A-GRID
+
+axis_label_layers:
+  - A-ANNO-TXT
+```
+
+如需指定其他规则文件：
+
+```powershell
+python main.py extract-cad --dxf data/input/dxf/sample.dxf --out data/output/json/cad_raw_axis_check.json --axis-only --axis-rules path/to/axis_layer_rules.yaml
+```
+
 `cad_raw.json` 至少包含：
 
 ```json
@@ -71,9 +98,38 @@ python main.py extract-cad --dxf data/input/dxf/sample.dxf --out data/output/jso
   "texts": [],
   "blocks": [],
   "polylines": [],
+  "axes": [],
   "issues": []
 }
 ```
+
+`axes` 来自轴网图层中的 `LINE / LWPOLYLINE / POLYLINE / ARC`。弧形轴线会采样为点列；同一图层中首尾相接的弧段会合并为一根曲线轴线。每条至少包含：
+
+```json
+{
+  "layer": "A-AXIS",
+  "entity_type": "LINE",
+  "points": [[0, 0], [10000, 0]],
+  "bbox": [0, 0, 10000, 0],
+  "length": 10000
+}
+```
+
+## JSON 人工校核 HTML
+
+从任意 CAD 原始 JSON 生成人工校核 HTML：
+
+```powershell
+python validate_json_html.py --json data/output/json/cad_raw_axis_check.json --out data/output/reports/json_review_real.html
+```
+
+默认只绘制轴线和匹配到的真实轴号标注，不绘制 `texts` 和 `polylines` 垃圾底图。需要调试完整原始 JSON 时可显式打开：
+
+```powershell
+python validate_json_html.py --json data/output/json/cad_raw_real.json --out data/output/reports/json_review_real.html --include-polylines --include-texts
+```
+
+多个 JSON 可以叠加到同一个 HTML 中，并通过页面顶部开关切换不同 JSON 数据源。
 
 ## 房间文字识别
 
@@ -114,7 +170,7 @@ python main.py build-room-candidates --cad data/output/json/cad_raw.json --label
 python main.py export-review-map --cad data/output/json/cad_raw.json --rooms data/output/json/room_candidates.json --out data/output/reports/room_candidates_review.html
 ```
 
-检查图是自包含 HTML/SVG 文件，包含浅色 CAD 底图、绿色严格匹配、橙色低置信度匹配、红色未匹配标签和候选列表。它用于 Phase 3 规则验收，不是最终人工校核界面。
+检查图是自包含 HTML/SVG 文件，包含浅色 CAD 底图、绿色严格匹配、橙色低置信度匹配、红色未匹配标签和候选列表。它仅用于 Phase 3 规则诊断，不进入正式人工审核链路。
 
 ## 初始房间 JSON
 
@@ -135,6 +191,27 @@ python main.py build-rooms --candidates data/output/json/room_candidates.json --
 - `issues`：缺失几何、面积偏差、fallback 匹配等问题。
 
 该输出仍是 `cad_auto_draft`，后续必须继续进入 PDF / OCR / 本地 AI 机器校验流程，不能作为最终成果。
+
+## 正式人工审核 HTML
+
+PDF 矢量校核、局部截图、本地 AI 辅助校核和 review task 生成之后，导出正式人工审核页面：
+
+```powershell
+python main.py build-review-tasks --rooms data/output/json/rooms_ai_checked.json --out data/output/json/review_tasks.json
+python main.py export-review-tasks-html --tasks data/output/json/review_tasks.json --out data/output/reports/review_tasks.html
+```
+
+该 HTML 用于正式人工审核，展示每个待审任务的 PDF 局部截图、自动识别字段、CAD 几何预览、PDF evidence、本地 AI 判断、issue 和建议修正字段。
+
+## 识别房间总览 HTML
+
+从全链路后的房间 JSON 导出房间总览页面：
+
+```powershell
+python main.py export-rooms-html --rooms data/output/json/rooms_ai_checked.json --out data/output/reports/recognized_rooms.html
+```
+
+该 HTML 展示所有识别到的房间，左侧为 CAD 坐标总图和房间列表，右侧为每个房间的 PDF 局部分图、识别字段、CAD 几何预览、PDF/AI 校核结论和 issue。
 
 ## PDF 矢量文字校核
 
@@ -208,9 +285,9 @@ CUDA 注意事项：
 ```text
 src/room_extractor/
   ai/         本地 OpenAI 兼容多模态模型客户端和截图校核流程
-  cad/        DXF 加载、DWG 转换、图层分析、文本/块/多段线提取
+  cad/        DXF 加载、DWG 转换、图层分析、文本/块/多段线/轴网线提取
   cli/        命令行入口
-  config/     图层规则配置
+  config/     图层规则配置、轴线专项图层规则
   export/     阶段检查图等导出能力
   extraction/ 房间文字解析、label 聚类、边界识别、Room JSON 生成
   geometry/   bbox、polygon 面积、IoU 等基础几何能力
@@ -230,7 +307,8 @@ python -m pytest
 
 当前通过用例覆盖：
 
-- DXF 加载、图层统计、TEXT/MTEXT/INSERT/LWPOLYLINE 提取
+- DXF 加载、图层统计、TEXT/MTEXT/INSERT/LWPOLYLINE/AXIS 提取
+- 轴线专项提取、轴线图层 YAML 规则、轴线 JSON 人工校核入口
 - DWG 文件扫描与转换路径组织
 - `convert-dwg` CLI 汇总输出
 - 房号、房名、面积正则识别
