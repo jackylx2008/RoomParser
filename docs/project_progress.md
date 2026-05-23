@@ -541,10 +541,30 @@ python -m pytest
 
 ## 下一步建议
 
+### 重启对话接续入口
+
+下一次对话建议从“结构柱辅助房间边界优化”开始。当前结构柱规则已完成从人工柱专用 DXF 到全量 DXF 的迁移验证，后续不需要再通过 CAD 手工冻结 / 隐藏图层后另存柱专用 DXF。
+
+建议先读取这些基线文件：
+
+1. `data/output/json/rooms_auto_real.json`
+2. `data/output/json/room_candidates_real.json`
+3. `data/output/json/cad_raw_axis_check.json`
+4. `data/output/json/cad_raw_columns_from_full_real.json`
+5. `data/output/reports/json_review_axis_columns_from_full.html`
+
+下一步工程任务建议拆成：
+
+1. 分析 `unmatched_labels`、`SPECIAL_SPACE_NO_AREA_BOUNDARY`、fallback 房间和低置信度房间，与结构柱 polygon 的空间重叠关系。
+2. 设计 column-aware boundary matcher：把柱 polygon 作为独立障碍 / 扣除 / 降权输入，不直接合并进 `rooms_auto.json`。
+3. 在房间候选 polygon 匹配阶段增加柱体重叠标记，例如 `column_overlap_count`、`column_overlap_area`、`column_nearby` 和 reason code。
+4. 输出新的中间 JSON 和阶段检查 HTML，用于对比启用柱规则前后的房间边界识别结果。
+5. 将稳定有效的柱辅助逻辑沉淀到配置或规则层，继续保持轴线 JSON、结构柱 JSON 和房间 JSON 相互独立。
+
+并行保留的人工复核路线：
+
 1. 使用 `data/output/reports/review_tasks_real.html` 进行正式人工审核。
 2. 记录人工修正字段、人工 polygon、审核结论和 reason code。
 3. 实现人工审核结果回写，生成 `rooms_final.json`。
 4. 将高频问题沉淀为结构分类、边界推断和截图定位规则。
 5. 继续用 `json_review_real.html` 抽查轴线专项 JSON，沉淀更多轴线图层和轴号标注样式。
-6. 使用 `json_review_axis_columns.html` 抽查结构柱专项 JSON，确认柱位、柱外轮廓和数量是否符合图纸。
-7. 将结构柱 JSON 作为后续房间边界识别优化输入，用于区分柱体、墙线和房间可用边界。

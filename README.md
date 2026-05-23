@@ -402,6 +402,30 @@ python -m pytest
 - `check-images-ai` CLI 输出
 - 几何 bbox、面积、点在 polygon 内、IoU
 
+## 重启后建议起点
+
+下一次对话可直接从“结构柱辅助房间边界优化”开始。当前基线已经可以从全量 DXF 自动生成轴线 JSON 和结构柱 JSON，不需要再手工冻结 / 隐藏图层后另存柱专用 DXF。
+
+建议先确认基线：
+
+```powershell
+python -m pytest
+```
+
+然后复用或重新生成结构柱专项 JSON：
+
+```powershell
+python main.py extract-cad --dxf data/input/dxf/L2_20.00m平面图.dxf --out data/output/json/cad_raw_columns_from_full_real.json --columns-only
+```
+
+若需要人工核对轴线和结构柱叠加效果：
+
+```powershell
+python validate_json_html.py --json data/output/json/cad_raw_axis_check.json --json data/output/json/cad_raw_columns_from_full_real.json --out data/output/reports/json_review_axis_columns_from_full.html
+```
+
+下一步工程目标是把 `columns` JSON 作为房间边界识别优化的独立输入：用于标记柱体障碍、柱体重叠、候选 polygon 扣除或降权，以及区分柱外轮廓、墙线和房间可用边界。结构柱 JSON 继续保持独立，不直接并入 `rooms_auto.json`，只作为匹配、校核和后处理规则的证据输入。
+
 ## 进展文档
 
 阶段进展见 [docs/project_progress.md](docs/project_progress.md)。
