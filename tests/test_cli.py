@@ -72,6 +72,89 @@ def test_cli_extract_cad_axis_only_uses_axis_rules(tmp_path: Path) -> None:
     assert {layer["name"] for layer in payload["layers"]} == {"A-GRID", "A-ANNO-TXT"}
 
 
+def test_cli_extract_cad_columns_only_uses_column_rules(tmp_path: Path) -> None:
+    dxf_path = tmp_path / "sample_columns.dxf"
+    out_path = tmp_path / "cad_raw_columns.json"
+    rules_path = tmp_path / "column_rules.yaml"
+    rules_path.write_text("column_layers:\n  - A-STR-COLM\ncolumn_block_layers:\n  - new column &beam\n", encoding="utf-8")
+    doc = ezdxf.new()
+    doc.layers.add("XREF$0$A-STR-COLM")
+    doc.layers.add("A-WALL")
+    msp = doc.modelspace()
+    hatch = msp.add_hatch(dxfattribs={"layer": "XREF$0$A-STR-COLM"})
+    hatch.paths.add_polyline_path([(0, 0), (1000, 0), (1000, 500), (0, 500)], is_closed=True)
+    junk = msp.add_text("垃圾", dxfattribs={"layer": "A-WALL", "height": 350})
+    junk.dxf.insert = (5, 5)
+    doc.blocks.new("COLUMN_TAG")
+    insert = msp.add_blockref("COLUMN_TAG", (2000, 3000), dxfattribs={"layer": "new column &beam"})
+    insert.add_attrib("COL_NO", "C1", insert=(2000, 3000))
+    doc.saveas(dxf_path)
+
+    assert (
+        main(
+            [
+                "extract-cad",
+                "--dxf",
+                str(dxf_path),
+                "--out",
+                str(out_path),
+                "--columns-only",
+                "--column-rules",
+                str(rules_path),
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert [column["source"] for column in payload["columns"]] == ["hatch_boundary", "block_insert"]
+    assert payload["columns"][0]["bbox"] == [0.0, 0.0, 1000.0, 500.0]
+    assert payload["columns"][1]["block_name"] == "COLUMN_TAG"
+    assert payload["columns"][1]["attributes"] == {"COL_NO": "C1"}
+    assert payload["texts"] == []
+    assert payload["blocks"] == []
+    assert payload["polylines"] == []
+    assert payload["axes"] == []
+    assert {layer["name"] for layer in payload["layers"]} == {"XREF$0$A-STR-COLM", "new column &beam"}
+
+
+def test_cli_analyze_column_features_writes_reusable_summary(tmp_path: Path) -> None:
+    dxf_path = tmp_path / "sample_columns.dxf"
+    out_path = tmp_path / "column_features.json"
+    rules_path = tmp_path / "column_rules.yaml"
+    rules_path.write_text("column_layers:\n  - A-STR-COLM\n", encoding="utf-8")
+    doc = ezdxf.new()
+    doc.layers.add("XREF$0$A-STR-COLM")
+    msp = doc.modelspace()
+    hatch = msp.add_hatch(dxfattribs={"layer": "XREF$0$A-STR-COLM", "color": 256})
+    hatch.paths.add_polyline_path([(0, 0), (1000, 0), (1000, 500), (0, 500)], is_closed=True)
+    doc.saveas(dxf_path)
+
+    assert (
+        main(
+            [
+                "analyze-column-features",
+                "--dxf",
+                str(dxf_path),
+                "--out",
+                str(out_path),
+                "--column-rules",
+                str(rules_path),
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["column_sample_count"] == 1
+    assert payload["entity_type_counts"] == {"HATCH": 1}
+    color_index = int(next(iter(payload["dxf_attributes"]["color_counts"])))
+    assert payload["recommended_rules"]["column_layers"] == ["A-STR-COLM"]
+    assert payload["recommended_rules"]["column_entity_types"] == ["HATCH"]
+    assert payload["recommended_rules"]["color_indices"] == [color_index]
+    assert payload["recommended_rules"]["max_area"] == 600000.0
+
+
 def test_cli_rejects_non_dxf_file(tmp_path: Path, capsys) -> None:
     dwg_path = tmp_path / "sample.dwg"
     dwg_path.write_bytes(b"not a dxf")

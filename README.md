@@ -1,6 +1,6 @@
 # Building Room Extractor
 
-建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5 / Phase 6：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、轴线 JSON 提取与校核、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核、PDF 局部截图生成。
+建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5 / Phase 6：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、轴线 JSON 提取与校核、结构柱 JSON 提取与特征分析、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核、PDF 局部截图生成。
 
 ## 当前能力
 
@@ -9,6 +9,8 @@
 - `room-extractor analyze-layers --dxf <file>` 输出 DXF 图层清单和实体统计。
 - `room-extractor extract-cad --dxf <file> --out <file>` 输出 `cad_raw.json`，包含图层、文字、块属性、多段线和轴网线基础信息。
 - `room-extractor extract-cad --dxf <file> --out <file> --axis-only` 仅按轴线规则输出轴线和轴号图层信息，适合生成轴线专项校核 JSON。
+- `room-extractor extract-cad --dxf <file> --out <file> --columns-only` 按结构柱规则输出独立 `columns` JSON，可自动展开块 / 外参内部图元。
+- `room-extractor analyze-column-features --dxf <verified-columns.dxf> --out <file>` 从已确认正确的柱专项 DXF 统计图层、颜色、填充、长宽和面积等可复用特征。
 - `room-extractor build-room-labels --cad <cad_raw.json> --out <file>` 输出 `room_label_candidates.json`，包含房号、房名、面积和文本聚类结果。
 - `room-extractor build-room-candidates --cad <cad_raw.json> --labels <room_label_candidates.json> --out <file>` 输出 `room_candidates.json`，将房间 label 中心点匹配到闭合 polygon。
 - `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，仅用于 Phase 3 规则诊断。
@@ -22,7 +24,7 @@
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
 - 根目录入口 `python validate_json_html.py --json <file> --out <file>` 可生成 `JSON人工校核` HTML，支持多个 JSON 叠加显示和开关控制。
 
-当前不包含 OCR、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。本地 AI 命令已接入 OpenAI 兼容接口，真实调用需要先启动本地 llama.cpp 服务并准备 `common.env`。
+当前不包含 OCR、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。本地 AI 命令已接入 OpenAI 兼容接口，真实调用需要先启动本地 llama.cpp 服务并准备 `common.env`。结构柱专项 JSON 是房间边界识别优化的中间输入，不替代正式房间成果。
 
 说明：Phase 3 后的 HTML/SVG 只用于阶段开发验收和规则调试，已从正式人工审核链路中剔除。正式人工校核应使用 `review_tasks.json` 和 `export-review-tasks-html` 生成的 HTML，放在 PDF 矢量校核、局部截图、OCR / 本地 AI 辅助校验、置信度评分和 review task 生成之后。
 
@@ -115,6 +117,75 @@ python main.py extract-cad --dxf data/input/dxf/sample.dxf --out data/output/jso
 }
 ```
 
+## 结构柱专项 JSON
+
+从已确认正确的柱专项 DXF 中提取可复用特征：
+
+```powershell
+python main.py analyze-column-features --dxf data/input/dxf/L2_20.00m平面图-COLUMNS.dxf --out data/output/json/column_features_real.json
+```
+
+该命令会统计：
+
+- 图层后缀，例如外参图层中的 `A-STR-COLM`。
+- 实体类型，例如 `HATCH`。
+- DXF 颜色、true color、线型。
+- HATCH 填充模式、是否 solid fill、边界 path 数量。
+- 单个柱图元的宽、高、面积分布，包括 min / p50 / p90 / p95 / p99 / max。
+- `recommended_rules`：带余量的推荐复用规则。
+
+默认结构柱规则位于 `src/room_extractor/config/column_layer_rules.yaml`。当前真实样本沉淀的核心特征为：
+
+```yaml
+column_layers:
+  - A-STR-COLM
+
+column_entity_types:
+  - HATCH
+
+color_indices:
+  - 256
+
+hatch_patterns:
+  - SOLID
+
+solid_fill: true
+max_width: 1800
+max_height: 1800
+max_area: 2500000
+expand_insert_virtual_entities: true
+```
+
+直接从全量 DXF 提取结构柱，不需要在 CAD 中手工冻结/隐藏无关图元：
+
+```powershell
+python main.py extract-cad --dxf data/input/dxf/L2_20.00m平面图.dxf --out data/output/json/cad_raw_columns_from_full_real.json --columns-only
+```
+
+输出 `columns` 字段，每个结构柱至少包含：
+
+```json
+{
+  "column_id": "column_00001",
+  "layer": "xref$0$A-STR-COLM",
+  "entity_type": "HATCH",
+  "source": "hatch_boundary",
+  "polygon": [[0, 0], [1000, 0], [1000, 1000], [0, 1000]],
+  "bbox": [0, 0, 1000, 1000],
+  "center": [500, 500],
+  "area": 1000000,
+  "width": 1000,
+  "height": 1000
+}
+```
+
+说明：
+
+- `extract-cad --columns-only` 会按图层、实体类型、颜色、HATCH 填充和尺寸范围过滤候选。
+- 当柱图元位于块或外参内部时，会通过 `INSERT.virtual_entities()` 展开后再识别。
+- HATCH 有多条边界 path 时，当前取最大边界作为柱外轮廓，避免内外边界重复输出。
+- 真实 L2 全量 DXF 已验证可直接提取 `750` 个结构柱，与手工柱专项 DXF 的确认结果一致。
+
 ## JSON 人工校核 HTML
 
 从任意 CAD 原始 JSON 生成人工校核 HTML：
@@ -130,6 +201,12 @@ python validate_json_html.py --json data/output/json/cad_raw_real.json --out dat
 ```
 
 多个 JSON 可以叠加到同一个 HTML 中，并通过页面顶部开关切换不同 JSON 数据源。
+
+轴线和结构柱可以叠加检查：
+
+```powershell
+python validate_json_html.py --json data/output/json/cad_raw_axis_check.json --json data/output/json/cad_raw_columns_from_full_real.json --out data/output/reports/json_review_axis_columns_from_full.html
+```
 
 ## 房间文字识别
 
@@ -285,9 +362,9 @@ CUDA 注意事项：
 ```text
 src/room_extractor/
   ai/         本地 OpenAI 兼容多模态模型客户端和截图校核流程
-  cad/        DXF 加载、DWG 转换、图层分析、文本/块/多段线/轴网线提取
+  cad/        DXF 加载、DWG 转换、图层分析、文本/块/多段线/轴网线/结构柱提取
   cli/        命令行入口
-  config/     图层规则配置、轴线专项图层规则
+  config/     图层规则配置、轴线和结构柱专项规则
   export/     阶段检查图等导出能力
   extraction/ 房间文字解析、label 聚类、边界识别、Room JSON 生成
   geometry/   bbox、polygon 面积、IoU 等基础几何能力
@@ -309,6 +386,7 @@ python -m pytest
 
 - DXF 加载、图层统计、TEXT/MTEXT/INSERT/LWPOLYLINE/AXIS 提取
 - 轴线专项提取、轴线图层 YAML 规则、轴线 JSON 人工校核入口
+- 结构柱专项提取、结构柱特征分析、柱规则 YAML、块 / 外参内部图元展开
 - DWG 文件扫描与转换路径组织
 - `convert-dwg` CLI 汇总输出
 - 房号、房名、面积正则识别

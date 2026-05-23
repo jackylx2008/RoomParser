@@ -74,6 +74,23 @@ class CadAxisEntity(BaseModel):
     length: float | None = None
 
 
+class CadColumnEntity(BaseModel):
+    """Raw structural column entity extracted from DXF column layers."""
+
+    column_id: str
+    layer: str
+    entity_type: str
+    source: str
+    polygon: list[Point] = Field(default_factory=list)
+    bbox: BBox | None = None
+    center: Point | None = None
+    area: float | None = None
+    width: float | None = None
+    height: float | None = None
+    block_name: str | None = None
+    attributes: dict[str, str] = Field(default_factory=dict)
+
+
 class CadRawExtraction(BaseModel):
     """Phase 1 raw CAD extraction JSON."""
 
@@ -83,6 +100,7 @@ class CadRawExtraction(BaseModel):
     blocks: list[CadBlockEntity] = Field(default_factory=list)
     polylines: list[CadPolylineEntity] = Field(default_factory=list)
     axes: list[CadAxisEntity] = Field(default_factory=list)
+    columns: list[CadColumnEntity] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
 
 

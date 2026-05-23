@@ -1,0 +1,23 @@
+column_layers:
+  - A-STR-COLM
+  - S-COL
+  - S-COLUMN
+  - 结构柱
+  - 柱
+
+column_block_layers:
+
+column_entity_types:
+  - HATCH
+
+color_indices:
+  - 256
+
+hatch_patterns:
+  - SOLID
+
+solid_fill: true
+max_width: 1800
+max_height: 1800
+max_area: 2500000
+expand_insert_virtual_entities: true

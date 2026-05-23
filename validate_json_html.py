@@ -25,6 +25,7 @@ class ReviewSource:
     name: str
     payload: dict[str, Any]
     axes: list[dict[str, Any]]
+    columns: list[dict[str, Any]]
     polylines: list[dict[str, Any]]
     texts: list[dict[str, Any]]
     label_texts: list[dict[str, Any]]
@@ -67,6 +68,7 @@ def _load_source(index: int, path: Path, include_polylines: bool, include_texts:
     payload = json.loads(path.read_text(encoding="utf-8"))
     name = str(payload.get("source_file") or path.name)
     axes = [_normalize_axis(axis) for axis in payload.get("axes", []) if _normalize_axis(axis)["points"]]
+    columns = [_normalize_column(column) for column in payload.get("columns", []) if _normalize_column(column)["drawable"]]
     polylines = (
         [_normalize_polyline(polyline) for polyline in payload.get("polylines", []) if _normalize_polyline(polyline)["points"]]
         if include_polylines
@@ -81,6 +83,7 @@ def _load_source(index: int, path: Path, include_polylines: bool, include_texts:
         name=name,
         payload=payload,
         axes=axes,
+        columns=columns,
         polylines=polylines,
         texts=texts,
         label_texts=label_texts,
@@ -94,13 +97,16 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
     source_controls = "\n".join(_source_control(source) for source in sources)
     source_rows = "\n".join(_source_row(source) for source in sources)
     layer_rows = "\n".join(_layer_row(source) for source in sources)
-    detail_rows = "\n".join(_axis_rows(source) for source in sources)
-    if not detail_rows:
-        detail_rows = '<tr><td colspan="8">未发现可绘制轴线。</td></tr>'
+    axis_detail_rows = "\n".join(_axis_rows(source) for source in sources)
+    if not axis_detail_rows:
+        axis_detail_rows = '<tr><td colspan="8">未发现可绘制轴线。</td></tr>'
+    column_detail_rows = "\n".join(_column_rows(source) for source in sources)
+    if not column_detail_rows:
+        column_detail_rows = '<tr><td colspan="9">未发现可绘制结构柱。</td></tr>'
 
     warning = ""
-    if not any(source.axes or source.polylines or source.texts for source in sources):
-        warning = '<div class="warning">输入 JSON 中没有可绘制的 axes、polylines 或 texts。</div>'
+    if not any(source.axes or source.columns or source.polylines or source.texts for source in sources):
+        warning = '<div class="warning">输入 JSON 中没有可绘制的 axes、columns、polylines 或 texts。</div>'
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -220,6 +226,7 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
       vertical-align: -1px;
     }}
     body.hide-axes .kind-axes,
+    body.hide-columns .kind-columns,
     body.hide-polylines .kind-polylines,
     body.hide-texts .kind-texts,
     body.hide-axis-labels .kind-axis-labels {{
@@ -241,6 +248,7 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
         <strong>显示内容</strong>
         <label><input type="checkbox" data-toggle-class="hide-axes" checked> 轴线</label>
         <label><input type="checkbox" data-toggle-class="hide-axis-labels" checked> 轴号</label>
+        <label><input type="checkbox" data-toggle-class="hide-columns" checked> 结构柱</label>
         <label><input type="checkbox" data-toggle-class="hide-polylines"> 多段线（需 --include-polylines）</label>
         <label><input type="checkbox" data-toggle-class="hide-texts"> 文本点（需 --include-texts）</label>
       </div>
@@ -264,7 +272,7 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
       <section>
         <h2>图层统计</h2>
         <table>
-          <thead><tr><th>数据源</th><th>图层</th><th>轴线</th><th>多段线</th></tr></thead>
+          <thead><tr><th>数据源</th><th>图层</th><th>轴线</th><th>结构柱</th><th>多段线</th></tr></thead>
           <tbody>{layer_rows}</tbody>
         </table>
       </section>
@@ -272,7 +280,14 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
         <h2>轴线明细（每个数据源前 200 条）</h2>
         <table>
           <thead><tr><th>数据源</th><th>#</th><th>轴号</th><th>图层</th><th>类型</th><th>长度</th><th>BBox</th><th>点数</th></tr></thead>
-          <tbody>{detail_rows}</tbody>
+          <tbody>{axis_detail_rows}</tbody>
+        </table>
+      </section>
+      <section style="grid-column: 1 / -1;">
+        <h2>结构柱明细（每个数据源前 300 条）</h2>
+        <table>
+          <thead><tr><th>数据源</th><th>#</th><th>柱 ID</th><th>图层</th><th>来源</th><th>面积</th><th>宽 x 高</th><th>BBox</th><th>点数</th></tr></thead>
+          <tbody>{column_detail_rows}</tbody>
         </table>
       </section>
     </div>
@@ -302,19 +317,21 @@ def _source_control(source: ReviewSource) -> str:
 def _source_row(source: ReviewSource) -> str:
     return (
         f'<tr class="source-{source.index}"><td><code>{escape(str(source.path))}</code><br>{escape(source.name)}</td>'
-        f"<td>axes: {len(source.axes)}<br>polylines: {len(source.polylines)}<br>texts: {len(source.texts)}</td></tr>"
+        f"<td>axes: {len(source.axes)}<br>columns: {len(source.columns)}<br>"
+        f"polylines: {len(source.polylines)}<br>texts: {len(source.texts)}</td></tr>"
     )
 
 
 def _layer_row(source: ReviewSource) -> str:
     axis_counts = Counter(axis["layer"] for axis in source.axes)
+    column_counts = Counter(column["layer"] for column in source.columns)
     polyline_counts = Counter(polyline["layer"] for polyline in source.polylines)
-    layers = sorted(set(axis_counts) | set(polyline_counts))
+    layers = sorted(set(axis_counts) | set(column_counts) | set(polyline_counts))
     if not layers:
-        return f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td colspan="3">无图层数据</td></tr>'
+        return f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td colspan="4">无图层数据</td></tr>'
     return "\n".join(
         f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td>{escape(layer)}</td>'
-        f"<td>{axis_counts.get(layer, 0)}</td><td>{polyline_counts.get(layer, 0)}</td></tr>"
+        f"<td>{axis_counts.get(layer, 0)}</td><td>{column_counts.get(layer, 0)}</td><td>{polyline_counts.get(layer, 0)}</td></tr>"
         for layer in layers
     )
 
@@ -323,6 +340,13 @@ def _axis_rows(source: ReviewSource) -> str:
     rows = []
     for index, axis in enumerate(source.axes[:200], start=1):
         rows.append(_axis_row(source, index, axis, source.axis_labels.get(index - 1, ("", ""))))
+    return "\n".join(rows)
+
+
+def _column_rows(source: ReviewSource) -> str:
+    rows = []
+    for index, column in enumerate(source.columns[:300], start=1):
+        rows.append(_column_row(source, index, column))
     return "\n".join(rows)
 
 
@@ -348,6 +372,24 @@ def _normalize_polyline(polyline: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_column(column: dict[str, Any]) -> dict[str, Any]:
+    polygon = [_point(point) for point in column.get("polygon", []) if _point(point) is not None]
+    center = _point(column.get("center"))
+    return {
+        "column_id": str(column.get("column_id") or ""),
+        "layer": str(column.get("layer") or "0"),
+        "entity_type": str(column.get("entity_type") or ""),
+        "source": str(column.get("source") or ""),
+        "polygon": polygon,
+        "center": center,
+        "bbox": column.get("bbox"),
+        "area": column.get("area"),
+        "width": column.get("width"),
+        "height": column.get("height"),
+        "drawable": bool(polygon or center is not None),
+    }
+
+
 def _normalize_text(text: dict[str, Any]) -> dict[str, Any]:
     return {
         "text": str(text.get("text") or "").strip(),
@@ -369,6 +411,8 @@ def _bounds_for_sources(sources: list[ReviewSource]) -> BBox | None:
     points: list[Point] = []
     for source in sources:
         points.extend(point for axis in source.axes for point in axis["points"])
+        points.extend(point for column in source.columns for point in column["polygon"])
+        points.extend(column["center"] for column in source.columns if column["center"] is not None)
         points.extend(point for polyline in source.polylines for point in polyline["points"])
         points.extend(text["position"] for text in source.texts if text["position"] is not None)
     if not points:
@@ -402,6 +446,7 @@ def _review_svg(sources: list[ReviewSource], bounds: BBox) -> str:
     labels = []
     for source in sources:
         color = _source_color(source.index)
+        geometry.extend(_column_shape(source, column, color, stroke_width) for column in source.columns)
         geometry.extend(_polyline_shape(source, polyline, color, stroke_width) for polyline in source.polylines)
         geometry.extend(_axis_shape(source, axis, color, stroke_width) for axis in source.axes)
         labels.extend(
@@ -452,6 +497,26 @@ def _polyline_shape(source: ReviewSource, polyline: dict[str, Any], color: str, 
     )
 
 
+def _column_shape(source: ReviewSource, column: dict[str, Any], color: str, stroke_width: float) -> str:
+    title = escape(f'{source.name} / columns / {column["column_id"]} / {column["layer"]}')
+    points = column["polygon"]
+    if len(points) >= 3:
+        path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + " Z"
+        return (
+            f'<path class="source-{source.index} kind-columns" d="{path}" fill="{color}" fill-opacity="0.20" '
+            f'stroke="{color}" stroke-width="{stroke_width * 0.75:.3f}" opacity="0.95"><title>{title}</title></path>'
+        )
+    center = column["center"]
+    if center is None:
+        return ""
+    x, y = center
+    radius = stroke_width * 3.0
+    return (
+        f'<circle class="source-{source.index} kind-columns" cx="{x:.3f}" cy="{y:.3f}" r="{radius:.3f}" '
+        f'fill="{color}" fill-opacity="0.45" stroke="{color}" stroke-width="{stroke_width:.3f}"><title>{title}</title></circle>'
+    )
+
+
 def _axis_endpoint_labels(source: ReviewSource, axis: dict[str, Any], labels: tuple[str, str], font_size: float) -> str:
     if not axis["points"]:
         return ""
@@ -498,6 +563,20 @@ def _axis_row(source: ReviewSource, index: int, axis: dict[str, Any], labels: tu
         f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td>{index}</td><td>{escape(label_text)}</td>'
         f"<td>{escape(axis['layer'])}</td><td>{escape(axis['entity_type'])}</td><td>{_format_number(axis.get('length'))}</td>"
         f"<td><code>{escape(bbox_text)}</code></td><td>{len(axis['points'])}</td></tr>"
+    )
+
+
+def _column_row(source: ReviewSource, index: int, column: dict[str, Any]) -> str:
+    bbox = column.get("bbox")
+    bbox_text = "-"
+    if isinstance(bbox, list) and len(bbox) == 4:
+        bbox_text = ", ".join(_format_number(value) for value in bbox)
+    size_text = f"{_format_number(column.get('width'))} x {_format_number(column.get('height'))}"
+    return (
+        f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td>{index}</td>'
+        f"<td>{escape(column['column_id'])}</td><td>{escape(column['layer'])}</td><td>{escape(column['source'])}</td>"
+        f"<td>{_format_number(column.get('area'))}</td><td>{escape(size_text)}</td>"
+        f"<td><code>{escape(bbox_text)}</code></td><td>{len(column['polygon'])}</td></tr>"
     )
 
 

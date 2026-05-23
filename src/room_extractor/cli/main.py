@@ -9,8 +9,16 @@ from typing import Sequence
 
 from room_extractor import __version__
 from room_extractor.ai import LocalAiConfig, check_rooms_with_local_ai
-from room_extractor.cad import AcCoreConsoleDwgConverter, analyze_layers, convert_dwg_directory, extract_cad_raw, load_dxf
+from room_extractor.cad import (
+    AcCoreConsoleDwgConverter,
+    analyze_column_features,
+    analyze_layers,
+    convert_dwg_directory,
+    extract_cad_raw,
+    load_dxf,
+)
 from room_extractor.config.axis_rules import load_axis_layer_rules
+from room_extractor.config.column_rules import load_column_layer_rules
 from room_extractor.export import export_recognized_rooms_html, export_review_task_html, export_room_candidate_review_html
 from room_extractor.extraction import build_room_candidates, build_room_label_candidates, build_rooms_auto
 from room_extractor.extraction.room_json_builder import RoomsAutoBuild
@@ -37,7 +45,19 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser.add_argument("--out", required=True, help="Path to the output cad_raw.json file.")
     extract_parser.add_argument("--axis-only", action="store_true", help="Only extract configured axis lines and axis label texts.")
     extract_parser.add_argument("--axis-rules", help="Path to axis layer YAML. Defaults to config/axis_layer_rules.yaml.")
+    extract_parser.add_argument("--columns-only", action="store_true", help="Only extract configured structural column entities.")
+    extract_parser.add_argument("--column-rules", help="Path to column layer YAML. Defaults to config/column_layer_rules.yaml.")
     extract_parser.set_defaults(func=_run_extract_cad)
+
+    column_features_parser = subparsers.add_parser(
+        "analyze-column-features",
+        help="Analyze reusable structural column features from a verified column DXF.",
+    )
+    column_features_parser.add_argument("--dxf", required=True, help="Path to the verified column-only DXF file.")
+    column_features_parser.add_argument("--out", required=True, help="Path to the output feature summary JSON.")
+    column_features_parser.add_argument("--column-rules", help="Path to seed column layer YAML. Defaults to config/column_layer_rules.yaml.")
+    column_features_parser.add_argument("--margin-ratio", type=float, default=0.2, help="Margin applied to recommended max geometry values.")
+    column_features_parser.set_defaults(func=_run_analyze_column_features)
 
     convert_parser = subparsers.add_parser("convert-dwg", help="Convert DWG files to DXF with AcCoreConsole.")
     convert_parser.add_argument("--input-dir", default="data/input/cad", help="Directory containing input DWG files.")
@@ -167,9 +187,34 @@ def _run_extract_cad(args: argparse.Namespace) -> int:
     out_path = Path(args.out)
     doc = load_dxf(dxf_path)
     axis_rules = load_axis_layer_rules(args.axis_rules) if bool(args.axis_only) else None
-    result = extract_cad_raw(doc, dxf_path, axis_only=bool(args.axis_only), axis_rules=axis_rules)
+    column_rules = load_column_layer_rules(args.column_rules) if bool(args.columns_only) else None
+    result = extract_cad_raw(
+        doc,
+        dxf_path,
+        axis_only=bool(args.axis_only),
+        axis_rules=axis_rules,
+        columns_only=bool(args.columns_only),
+        column_rules=column_rules,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    return 0
+
+
+def _run_analyze_column_features(args: argparse.Namespace) -> int:
+    dxf_path = Path(args.dxf)
+    out_path = Path(args.out)
+    doc = load_dxf(dxf_path)
+    column_rules = load_column_layer_rules(args.column_rules)
+    result = analyze_column_features(
+        doc,
+        source_file=dxf_path,
+        column_rules=column_rules,
+        margin_ratio=float(args.margin_ratio),
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {out_path}")
     return 0
 

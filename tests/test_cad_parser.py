@@ -4,7 +4,8 @@ from pathlib import Path
 
 import ezdxf
 
-from room_extractor.cad import analyze_layers, extract_cad_raw, load_dxf
+from room_extractor.cad import analyze_layers, extract_cad_raw, extract_columns, load_dxf
+from room_extractor.config.column_rules import ColumnLayerRules
 
 
 def test_dxf_phase1_extraction(tmp_path: Path) -> None:
@@ -35,6 +36,47 @@ def test_dxf_phase1_extraction(tmp_path: Path) -> None:
     assert raw.axes[1].entity_type == "ARC"
     assert len(raw.axes[1].points) >= 17
     assert raw.axes[1].length is not None
+    assert raw.columns == []
+
+
+def test_extract_columns_from_hatch_boundary(tmp_path: Path) -> None:
+    dxf_path = tmp_path / "columns.dxf"
+    doc = ezdxf.new()
+    doc.layers.add("XREF$0$A-STR-COLM")
+    doc.layers.add("A-WALL")
+    msp = doc.modelspace()
+    hatch = msp.add_hatch(dxfattribs={"layer": "XREF$0$A-STR-COLM"})
+    hatch.paths.add_polyline_path([(0, 0), (1200, 0), (1200, 800), (0, 800)], is_closed=True)
+    wall_hatch = msp.add_hatch(dxfattribs={"layer": "A-WALL"})
+    wall_hatch.paths.add_polyline_path([(0, 0), (10, 0), (10, 10), (0, 10)], is_closed=True)
+    doc.saveas(dxf_path)
+
+    columns, issues = extract_columns(ezdxf.readfile(dxf_path), ColumnLayerRules(column_layers=["A-STR-COLM"]))
+
+    assert issues == []
+    assert len(columns) == 1
+    assert columns[0].column_id == "column_00001"
+    assert columns[0].source == "hatch_boundary"
+    assert columns[0].bbox == (0.0, 0.0, 1200.0, 800.0)
+    assert columns[0].center == (600.0, 400.0)
+    assert columns[0].area == 960000.0
+
+
+def test_extract_columns_expands_insert_virtual_entities(tmp_path: Path) -> None:
+    dxf_path = tmp_path / "columns_in_block.dxf"
+    doc = ezdxf.new()
+    doc.layers.add("A-STR-COLM")
+    block = doc.blocks.new("COLUMN_BLOCK")
+    hatch = block.add_hatch(dxfattribs={"layer": "A-STR-COLM"})
+    hatch.paths.add_polyline_path([(0, 0), (500, 0), (500, 500), (0, 500)], is_closed=True)
+    doc.modelspace().add_blockref("COLUMN_BLOCK", (1000, 2000), dxfattribs={"layer": "0"})
+    doc.saveas(dxf_path)
+
+    columns, issues = extract_columns(ezdxf.readfile(dxf_path), ColumnLayerRules(column_layers=["A-STR-COLM"], column_entity_types=["HATCH"]))
+
+    assert issues == []
+    assert len(columns) == 1
+    assert columns[0].bbox == (1000.0, 2000.0, 1500.0, 2500.0)
 
 
 def _build_sample_dxf(path: Path) -> Path:
