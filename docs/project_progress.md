@@ -604,6 +604,7 @@ python -m pytest
 - `python -m pytest`：`51 passed`
 - 使用 Python Playwright 打开 `json_review_room_recognition_room_wall_zoom.html`，模拟鼠标滚轮后确认 SVG `viewBox` 宽高缩小，缩放读数从 `100%` 变为 `386%`。
 - 使用 Python Playwright 验证缩放到 `386%` 后，房间线宽和房间文字字号按约 `1 / 3.86` 反向缩小，视觉大小保持稳定；重置按钮可恢复初始 viewBox。
+- 人工打开 `json_review_room_recognition_room_wall_zoom.html` 校验后，确认滚轮缩放、拖拽平移以及线宽 / 文字恒定视觉大小效果满足当前校核需求。
 
 ## 已知边界
 

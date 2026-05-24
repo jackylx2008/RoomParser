@@ -246,6 +246,8 @@ python validate_json_html.py `
 - 双击总图或点击 `重置` 回到全图。
 - 缩放时线宽、点半径和文字高度会自动反向调整，保持屏幕视觉大小基本一致。
 
+该交互已在 `json_review_room_recognition_room_wall_zoom.html` 上验证，可用于房间名称密集区域的局部放大校核。
+
 ## 房间文字识别
 
 从 `cad_raw.json` 生成 Phase 2 的房间 label 候选：
