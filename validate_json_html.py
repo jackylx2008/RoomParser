@@ -177,17 +177,72 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
       font-size: 14px;
     }}
     .map {{
-      overflow: auto;
+      position: relative;
+      overflow: hidden;
       background: #ffffff;
       border: 1px solid #d8dee9;
       border-radius: 6px;
+      height: min(72vh, 860px);
+      min-height: 520px;
+      touch-action: none;
+      user-select: none;
+    }}
+    .map-toolbar {{
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px;
+      border: 1px solid #d8dee9;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+      font-size: 12px;
+    }}
+    .map-toolbar button {{
+      min-width: 30px;
+      height: 28px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #ffffff;
+      color: #1f2933;
+      cursor: pointer;
+      font: inherit;
+      line-height: 1;
+    }}
+    .map-toolbar button:hover {{
+      background: #f3f4f6;
+    }}
+    .zoom-readout {{
+      min-width: 48px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      color: #4b5563;
+    }}
+    .map-hint {{
+      position: absolute;
+      left: 12px;
+      bottom: 10px;
+      z-index: 3;
+      padding: 5px 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.88);
+      color: #4b5563;
+      font-size: 12px;
+      pointer-events: none;
     }}
     svg {{
       display: block;
-      min-width: 900px;
       width: 100%;
-      height: auto;
+      height: 100%;
       background: #ffffff;
+      cursor: grab;
+    }}
+    svg.is-panning {{
+      cursor: grabbing;
     }}
     .panel {{
       display: grid;
@@ -278,7 +333,16 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
   </header>
   <main>
     {warning}
-    <div class="map">{svg}</div>
+    <div class="map" data-map>
+      <div class="map-toolbar" aria-label="地图缩放工具">
+        <button type="button" data-zoom-out title="缩小">-</button>
+        <span class="zoom-readout" data-zoom-readout>100%</span>
+        <button type="button" data-zoom-in title="放大">+</button>
+        <button type="button" data-zoom-reset title="重置视图">重置</button>
+      </div>
+      <div class="map-hint">滚轮缩放，拖拽平移，双击重置</div>
+      {svg}
+    </div>
     <div class="panel">
       <section>
         <h2>数据源</h2>
@@ -325,6 +389,130 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
       applyToggle(input);
       input.addEventListener("change", () => applyToggle(input));
     }});
+
+    function installMapZoom(container) {{
+      const svg = container.querySelector("svg");
+      if (!svg) return;
+      const readout = container.querySelector("[data-zoom-readout]");
+      const zoomIn = container.querySelector("[data-zoom-in]");
+      const zoomOut = container.querySelector("[data-zoom-out]");
+      const zoomReset = container.querySelector("[data-zoom-reset]");
+      const initialBox = parseViewBox(svg);
+      if (!initialBox) return;
+      let viewBox = {{ ...initialBox }};
+      let isPanning = false;
+      let panStart = null;
+      const minZoom = 0.25;
+      const maxZoom = 80;
+
+      function parseViewBox(target) {{
+        const value = target.getAttribute("viewBox");
+        if (!value) return null;
+        const parts = value.trim().split(/[\\s,]+/).map(Number);
+        if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) return null;
+        return {{ x: parts[0], y: parts[1], width: parts[2], height: parts[3] }};
+      }}
+
+      function applyViewBox() {{
+        svg.setAttribute("viewBox", `${{viewBox.x}} ${{viewBox.y}} ${{viewBox.width}} ${{viewBox.height}}`);
+        if (readout) {{
+          const zoom = initialBox.width / viewBox.width;
+          readout.textContent = `${{Math.round(zoom * 100)}}%`;
+        }}
+      }}
+
+      function clientToSvgPoint(clientX, clientY) {{
+        const rect = svg.getBoundingClientRect();
+        const rx = rect.width ? (clientX - rect.left) / rect.width : 0.5;
+        const ry = rect.height ? (clientY - rect.top) / rect.height : 0.5;
+        return {{
+          x: viewBox.x + rx * viewBox.width,
+          y: viewBox.y + ry * viewBox.height,
+          rx,
+          ry,
+        }};
+      }}
+
+      function zoomAt(clientX, clientY, factor) {{
+        const currentZoom = initialBox.width / viewBox.width;
+        const nextZoom = Math.min(maxZoom, Math.max(minZoom, currentZoom / factor));
+        const effectiveFactor = currentZoom / nextZoom;
+        const anchor = clientToSvgPoint(clientX, clientY);
+        const nextWidth = initialBox.width / nextZoom;
+        const nextHeight = initialBox.height / nextZoom;
+        viewBox = {{
+          x: anchor.x - anchor.rx * nextWidth,
+          y: anchor.y - anchor.ry * nextHeight,
+          width: nextWidth,
+          height: nextHeight,
+        }};
+        if (Number.isFinite(effectiveFactor)) {{
+          applyViewBox();
+        }}
+      }}
+
+      function zoomFromCenter(factor) {{
+        const rect = svg.getBoundingClientRect();
+        zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
+      }}
+
+      function resetView() {{
+        viewBox = {{ ...initialBox }};
+        applyViewBox();
+      }}
+
+      svg.addEventListener("wheel", (event) => {{
+        event.preventDefault();
+        const factor = Math.exp(event.deltaY * 0.0015);
+        zoomAt(event.clientX, event.clientY, factor);
+      }}, {{ passive: false }});
+
+      svg.addEventListener("pointerdown", (event) => {{
+        if (event.button !== 0) return;
+        isPanning = true;
+        panStart = {{
+          clientX: event.clientX,
+          clientY: event.clientY,
+          viewBox: {{ ...viewBox }},
+        }};
+        svg.classList.add("is-panning");
+        svg.setPointerCapture(event.pointerId);
+      }});
+
+      svg.addEventListener("pointermove", (event) => {{
+        if (!isPanning || !panStart) return;
+        const rect = svg.getBoundingClientRect();
+        const dx = rect.width ? (event.clientX - panStart.clientX) / rect.width * panStart.viewBox.width : 0;
+        const dy = rect.height ? (event.clientY - panStart.clientY) / rect.height * panStart.viewBox.height : 0;
+        viewBox = {{
+          x: panStart.viewBox.x - dx,
+          y: panStart.viewBox.y - dy,
+          width: panStart.viewBox.width,
+          height: panStart.viewBox.height,
+        }};
+        applyViewBox();
+      }});
+
+      function endPan(event) {{
+        if (!isPanning) return;
+        isPanning = false;
+        panStart = null;
+        svg.classList.remove("is-panning");
+        if (event && svg.hasPointerCapture(event.pointerId)) {{
+          svg.releasePointerCapture(event.pointerId);
+        }}
+      }}
+
+      svg.addEventListener("pointerup", endPan);
+      svg.addEventListener("pointercancel", endPan);
+      svg.addEventListener("dblclick", resetView);
+      if (zoomIn) zoomIn.addEventListener("click", () => zoomFromCenter(1 / 1.6));
+      if (zoomOut) zoomOut.addEventListener("click", () => zoomFromCenter(1.6));
+      if (zoomReset) zoomReset.addEventListener("click", resetView);
+      applyViewBox();
+    }}
+
+    document.querySelectorAll("[data-map]").forEach(installMapZoom);
   </script>
 </body>
 </html>

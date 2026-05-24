@@ -22,7 +22,7 @@
 - `room-extractor export-review-tasks-html --tasks <review_tasks.json> --out <file>` 输出正式人工审核 HTML，展示截图、字段、AI 判断和 issue。
 - `room-extractor export-rooms-html --rooms <rooms_ai_checked.json> --out <file>` 输出识别房间总览 HTML，包含总图和每个房间的分图。
 - 根目录入口 `python main.py ...` 与安装后的 `room-extractor ...` 等价。
-- 根目录入口 `python validate_json_html.py --json <file> --out <file>` 可生成 `JSON人工校核` HTML，支持多个 JSON 叠加显示和开关控制；可绘制轴线、结构柱、房间识别 polygon、边界候选、房间 label 和明细表。
+- 根目录入口 `python validate_json_html.py --json <file> --out <file>` 可生成 `JSON人工校核` HTML，支持多个 JSON 叠加显示和开关控制；可绘制轴线、结构柱、房间识别 polygon、边界候选、房间 label 和明细表，并支持总图滚轮缩放和拖拽平移。
 
 当前不包含 OCR、Streamlit 人工校核界面或最终 Room JSON 生成。Phase 5 已包含初版 CAD/PDF 线性坐标映射，但该映射仍标记为 `CAD_PDF_MAPPING_UNVERIFIED`，后续需要通过截图和 AI / 人工校核继续确认。本地 AI 命令已接入 OpenAI 兼容接口，真实调用需要先启动本地 llama.cpp 服务并准备 `common.env`。轴线和结构柱专项 JSON 是房间边界识别优化的独立输入，不替代正式房间成果。
 
@@ -238,6 +238,12 @@ python validate_json_html.py `
 - `boundary_candidates`，需传 `--include-boundaries`。
 - 房间 label 文字、房间状态颜色和房间明细表。
 - 轴线、轴号、结构柱叠加图层。
+
+总图交互：
+
+- 鼠标滚轮按指针所在位置缩放。
+- 鼠标左键拖拽平移。
+- 双击总图或点击 `重置` 回到全图。
 
 ## 房间文字识别
 

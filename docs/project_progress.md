@@ -582,6 +582,27 @@ python -m pytest
 - README 已更新 `--visible-only`、`--boundary-layer`、`--axes`、`--columns`、房间型特殊空间、柱辅助元数据和房间识别 JSON 人工校核 HTML 的使用说明。
 - `validate_json_html.py` 的房间识别校核能力已在 README 和本进度文档同步记录。
 
+## 当前分支：HTML 总图缩放交互
+
+新建分支：`feature/html-map-wheel-zoom`。
+
+本轮目标：解决房间名称密集区域在校验 HTML 总图中互相重叠、无法局部放大的问题。
+
+已完成：
+
+- `validate_json_html.py` 生成的总图增加交互式 SVG viewBox 控制。
+- 支持鼠标滚轮按指针位置缩放。
+- 支持鼠标左键拖拽平移。
+- 支持工具条 `+` / `-` / `重置` 和双击重置。
+- 增加缩放百分比显示。
+- 增加单元测试，确保导出的 HTML 包含缩放容器、控件和滚轮监听。
+- 已重新生成 `data/output/reports/json_review_room_recognition_room_wall.html`。
+
+验证：
+
+- `python -m pytest`：`51 passed`
+- 使用 Python Playwright 打开 `json_review_room_recognition_room_wall_zoom.html`，模拟鼠标滚轮后确认 SVG `viewBox` 宽高缩小，缩放读数从 `100%` 变为 `386%`。
+
 ## 已知边界
 
 - 当前只解析 DXF，不直接解析 DWG；DWG 必须先通过 `convert-dwg` 转换。
