@@ -404,6 +404,9 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
       let panStart = null;
       const minZoom = 0.25;
       const maxZoom = 80;
+      const stableStrokeElements = Array.from(svg.querySelectorAll("[data-base-stroke-width]"));
+      const stableTextElements = Array.from(svg.querySelectorAll("[data-base-font-size]"));
+      const stableRadiusElements = Array.from(svg.querySelectorAll("[data-base-radius]"));
 
       function parseViewBox(target) {{
         const value = target.getAttribute("viewBox");
@@ -415,10 +418,53 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
 
       function applyViewBox() {{
         svg.setAttribute("viewBox", `${{viewBox.x}} ${{viewBox.y}} ${{viewBox.width}} ${{viewBox.height}}`);
+        const zoom = initialBox.width / viewBox.width;
+        scaleStableStyles(zoom);
         if (readout) {{
-          const zoom = initialBox.width / viewBox.width;
           readout.textContent = `${{Math.round(zoom * 100)}}%`;
         }}
+      }}
+
+      function scaledValue(value, zoom) {{
+        const number = Number(value);
+        if (!Number.isFinite(number)) return null;
+        return String(number / zoom);
+      }}
+
+      function scaleStableStyles(zoom) {{
+        if (!Number.isFinite(zoom) || zoom <= 0) return;
+        stableStrokeElements.forEach((element) => {{
+          const strokeWidth = scaledValue(element.dataset.baseStrokeWidth, zoom);
+          if (strokeWidth !== null) {{
+            element.setAttribute("stroke-width", strokeWidth);
+          }}
+          if (element.dataset.baseDasharray) {{
+            const dasharray = element.dataset.baseDasharray
+              .split(/\\s+/)
+              .map((value) => scaledValue(value, zoom))
+              .filter((value) => value !== null)
+              .join(" ");
+            if (dasharray) {{
+              element.setAttribute("stroke-dasharray", dasharray);
+            }}
+          }}
+        }});
+        stableTextElements.forEach((element) => {{
+          const fontSize = scaledValue(element.dataset.baseFontSize, zoom);
+          const strokeWidth = scaledValue(element.dataset.baseStrokeWidth, zoom);
+          if (fontSize !== null) {{
+            element.setAttribute("font-size", fontSize);
+          }}
+          if (strokeWidth !== null) {{
+            element.setAttribute("stroke-width", strokeWidth);
+          }}
+        }});
+        stableRadiusElements.forEach((element) => {{
+          const radius = scaledValue(element.dataset.baseRadius, zoom);
+          if (radius !== null) {{
+            element.setAttribute("r", radius);
+          }}
+        }});
       }}
 
       function clientToSvgPoint(clientX, clientY) {{
@@ -759,16 +805,19 @@ def _review_svg(sources: list[ReviewSource], bounds: BBox) -> str:
 def _axis_shape(source: ReviewSource, axis: dict[str, Any], color: str, stroke_width: float) -> str:
     title = escape(f'{source.name} / axes / {axis["layer"]} / {axis["entity_type"]}')
     points = axis["points"]
+    base_stroke = f"{stroke_width:.3f}"
     if len(points) == 2:
         (x1, y1), (x2, y2) = points
         return (
             f'<line class="source-{source.index} kind-axes" x1="{x1:.3f}" y1="{y1:.3f}" x2="{x2:.3f}" y2="{y2:.3f}" '
-            f'stroke="{color}" stroke-width="{stroke_width:.3f}" stroke-linecap="round" opacity="0.88"><title>{title}</title></line>'
+            f'stroke="{color}" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
+            f'stroke-linecap="round" opacity="0.88"><title>{title}</title></line>'
         )
     point_text = " ".join(f"{x:.3f},{y:.3f}" for x, y in points)
     return (
         f'<polyline class="source-{source.index} kind-axes" points="{point_text}" fill="none" stroke="{color}" '
-        f'stroke-width="{stroke_width:.3f}" stroke-linecap="round" stroke-linejoin="round" opacity="0.88"><title>{title}</title></polyline>'
+        f'stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
+        f'stroke-linecap="round" stroke-linejoin="round" opacity="0.88"><title>{title}</title></polyline>'
     )
 
 
@@ -777,15 +826,16 @@ def _polyline_shape(source: ReviewSource, polyline: dict[str, Any], color: str, 
     point_text = " ".join(f"{x:.3f},{y:.3f}" for x, y in points)
     title = escape(f'{source.name} / polylines / {polyline["layer"]}')
     close = "Z" if polyline["closed"] else ""
+    base_stroke = f"{stroke_width * 0.35:.3f}"
     if polyline["closed"] and points:
         path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + f" {close}"
         return (
             f'<path class="source-{source.index} kind-polylines" d="{path}" fill="none" stroke="{color}" '
-            f'stroke-width="{stroke_width * 0.35:.3f}" opacity="0.22"><title>{title}</title></path>'
+            f'stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" opacity="0.22"><title>{title}</title></path>'
         )
     return (
         f'<polyline class="source-{source.index} kind-polylines" points="{point_text}" fill="none" stroke="{color}" '
-        f'stroke-width="{stroke_width * 0.35:.3f}" opacity="0.22"><title>{title}</title></polyline>'
+        f'stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" opacity="0.22"><title>{title}</title></polyline>'
     )
 
 
@@ -795,9 +845,12 @@ def _boundary_shape(source: ReviewSource, boundary: dict[str, Any], stroke_width
         return ""
     path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + " Z"
     title = escape(f'{source.name} / boundary / {boundary["boundary_id"]} / {boundary["layer"]}')
+    base_stroke = f"{stroke_width * 0.45:.3f}"
+    base_dasharray = f"{stroke_width * 2:.3f} {stroke_width * 1.5:.3f}"
     return (
         f'<path class="source-{source.index} kind-boundaries" d="{path}" fill="none" stroke="#64748b" '
-        f'stroke-width="{stroke_width * 0.45:.3f}" stroke-dasharray="{stroke_width * 2:.3f} {stroke_width * 1.5:.3f}" '
+        f'stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
+        f'stroke-dasharray="{base_dasharray}" data-base-dasharray="{base_dasharray}" '
         f'opacity="0.42"><title>{title}</title></path>'
     )
 
@@ -811,9 +864,11 @@ def _room_shape(source: ReviewSource, room: dict[str, Any], stroke_width: float)
     title = escape(
         f'{source.name} / room / {room["room_id"]} / {room["room_number"]} {room["room_name"]} / {room["status"]}'
     )
+    base_stroke = f"{stroke_width * 0.9:.3f}"
     return (
         f'<path class="source-{source.index} kind-rooms" d="{path}" fill="{color}" fill-opacity="0.16" '
-        f'stroke="{color}" stroke-width="{stroke_width * 0.9:.3f}" opacity="0.92"><title>{title}</title></path>'
+        f'stroke="{color}" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
+        f'opacity="0.92"><title>{title}</title></path>'
     )
 
 
@@ -822,18 +877,22 @@ def _column_shape(source: ReviewSource, column: dict[str, Any], color: str, stro
     points = column["polygon"]
     if len(points) >= 3:
         path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + " Z"
+        base_stroke = f"{stroke_width * 0.75:.3f}"
         return (
             f'<path class="source-{source.index} kind-columns" d="{path}" fill="{color}" fill-opacity="0.20" '
-            f'stroke="{color}" stroke-width="{stroke_width * 0.75:.3f}" opacity="0.95"><title>{title}</title></path>'
+            f'stroke="{color}" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
+            f'opacity="0.95"><title>{title}</title></path>'
         )
     center = column["center"]
     if center is None:
         return ""
     x, y = center
-    radius = stroke_width * 3.0
+    radius = f"{stroke_width * 3.0:.3f}"
+    base_stroke = f"{stroke_width:.3f}"
     return (
-        f'<circle class="source-{source.index} kind-columns" cx="{x:.3f}" cy="{y:.3f}" r="{radius:.3f}" '
-        f'fill="{color}" fill-opacity="0.45" stroke="{color}" stroke-width="{stroke_width:.3f}"><title>{title}</title></circle>'
+        f'<circle class="source-{source.index} kind-columns" cx="{x:.3f}" cy="{y:.3f}" r="{radius}" data-base-radius="{radius}" '
+        f'fill="{color}" fill-opacity="0.45" stroke="{color}" stroke-width="{base_stroke}" '
+        f'data-base-stroke-width="{base_stroke}"><title>{title}</title></circle>'
     )
 
 
@@ -868,10 +927,13 @@ def _room_label(source: ReviewSource, room: dict[str, Any], font_size: float) ->
 
 def _svg_text(source: ReviewSource, point: Point, text: str, font_size: float, class_name: str) -> str:
     x, y = point
+    base_font = f"{font_size:.3f}"
+    base_stroke = f"{font_size * 0.18:.3f}"
     return (
-        f'<text class="source-{source.index} {class_name}" x="{x:.3f}" y="{-y:.3f}" font-size="{font_size:.3f}" '
+        f'<text class="source-{source.index} {class_name}" x="{x:.3f}" y="{-y:.3f}" '
+        f'font-size="{base_font}" data-base-font-size="{base_font}" '
         f'font-family="Arial, Microsoft YaHei, sans-serif" text-anchor="middle" dominant-baseline="central" '
-        f'fill="#111827" stroke="#ffffff" stroke-width="{font_size * 0.18:.3f}" paint-order="stroke">'
+        f'fill="#111827" stroke="#ffffff" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" paint-order="stroke">'
         f"{escape(text)}</text>"
     )
 

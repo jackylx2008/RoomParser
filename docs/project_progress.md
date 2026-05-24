@@ -595,6 +595,7 @@ python -m pytest
 - 支持鼠标左键拖拽平移。
 - 支持工具条 `+` / `-` / `重置` 和双击重置。
 - 增加缩放百分比显示。
+- 缩放时自动按 zoom 反向调整线宽、虚线间距、点半径、文字字号和文字描边，避免放大后线条和文字一起变粗变大。
 - 增加单元测试，确保导出的 HTML 包含缩放容器、控件和滚轮监听。
 - 已重新生成 `data/output/reports/json_review_room_recognition_room_wall.html`。
 
@@ -602,6 +603,7 @@ python -m pytest
 
 - `python -m pytest`：`51 passed`
 - 使用 Python Playwright 打开 `json_review_room_recognition_room_wall_zoom.html`，模拟鼠标滚轮后确认 SVG `viewBox` 宽高缩小，缩放读数从 `100%` 变为 `386%`。
+- 使用 Python Playwright 验证缩放到 `386%` 后，房间线宽和房间文字字号按约 `1 / 3.86` 反向缩小，视觉大小保持稳定；重置按钮可恢复初始 viewBox。
 
 ## 已知边界
 

@@ -49,7 +49,10 @@ def test_json_review_html_includes_mouse_wheel_zoom_controls(tmp_path: Path) -> 
 
     assert 'data-map' in html
     assert 'data-zoom-readout' in html
+    assert 'data-base-stroke-width' in html
+    assert 'data-base-font-size' in html
     assert 'addEventListener("wheel"' in html
     assert "clientToSvgPoint" in html
+    assert "scaleStableStyles" in html
     assert "滚轮缩放" in html
     assert "room_candidate_0001" in html
