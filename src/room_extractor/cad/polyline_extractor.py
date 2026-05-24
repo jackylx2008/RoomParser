@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ezdxf.document import Drawing as DxfDrawing
 
+from room_extractor.cad.entity_filter import iter_modelspace_entities
 from room_extractor.geometry import calculate_bbox, calculate_polygon_area
 from room_extractor.models.drawing import CadPolylineEntity
 from room_extractor.models.issue import Issue
@@ -11,11 +12,11 @@ logger = get_logger(__name__)
 Point = tuple[float, float]
 
 
-def extract_polylines(doc: DxfDrawing) -> tuple[list[CadPolylineEntity], list[Issue]]:
+def extract_polylines(doc: DxfDrawing, visible_only: bool = False) -> tuple[list[CadPolylineEntity], list[Issue]]:
     """Extract LWPOLYLINE and POLYLINE entities from modelspace."""
     polylines: list[CadPolylineEntity] = []
     issues: list[Issue] = []
-    for entity in doc.modelspace():
+    for entity in iter_modelspace_entities(doc, visible_only=visible_only):
         if entity.dxftype() not in {"LWPOLYLINE", "POLYLINE"}:
             continue
         try:

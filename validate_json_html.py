@@ -28,6 +28,8 @@ class ReviewSource:
     columns: list[dict[str, Any]]
     polylines: list[dict[str, Any]]
     texts: list[dict[str, Any]]
+    boundaries: list[dict[str, Any]]
+    rooms: list[dict[str, Any]]
     label_texts: list[dict[str, Any]]
     axis_labels: dict[int, tuple[str, str]]
 
@@ -44,6 +46,7 @@ def main() -> int:
     parser.add_argument("--title", default="JSON人工校核", help="HTML title.")
     parser.add_argument("--include-polylines", action="store_true", help="Write polylines into the HTML as an optional overlay.")
     parser.add_argument("--include-texts", action="store_true", help="Write text points into the HTML as an optional overlay.")
+    parser.add_argument("--include-boundaries", action="store_true", help="Write room boundary candidates into the HTML overlay.")
     args = parser.parse_args()
 
     input_paths = [Path(path) for path in (args.json or [str(DEFAULT_INPUT)])]
@@ -54,6 +57,7 @@ def main() -> int:
             path,
             include_polylines=bool(args.include_polylines),
             include_texts=bool(args.include_texts),
+            include_boundaries=bool(args.include_boundaries),
         )
         for index, path in enumerate(input_paths, start=1)
     ]
@@ -64,11 +68,14 @@ def main() -> int:
     return 0
 
 
-def _load_source(index: int, path: Path, include_polylines: bool, include_texts: bool) -> ReviewSource:
+def _load_source(index: int, path: Path, include_polylines: bool, include_texts: bool, include_boundaries: bool) -> ReviewSource:
     payload = json.loads(path.read_text(encoding="utf-8"))
     name = str(payload.get("source_file") or path.name)
     axes = [_normalize_axis(axis) for axis in payload.get("axes", []) if _normalize_axis(axis)["points"]]
     columns = [_normalize_column(column) for column in payload.get("columns", []) if _normalize_column(column)["drawable"]]
+    all_boundaries = [_normalize_boundary(boundary) for boundary in payload.get("boundary_candidates", [])]
+    boundaries = [boundary for boundary in all_boundaries if include_boundaries and boundary["points"]]
+    rooms = [_normalize_room(room) for room in _room_items(payload) if _normalize_room(room)["drawable"]]
     polylines = (
         [_normalize_polyline(polyline) for polyline in payload.get("polylines", []) if _normalize_polyline(polyline)["points"]]
         if include_polylines
@@ -86,6 +93,8 @@ def _load_source(index: int, path: Path, include_polylines: bool, include_texts:
         columns=columns,
         polylines=polylines,
         texts=texts,
+        boundaries=boundaries,
+        rooms=rooms,
         label_texts=label_texts,
         axis_labels=axis_labels,
     )
@@ -97,6 +106,9 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
     source_controls = "\n".join(_source_control(source) for source in sources)
     source_rows = "\n".join(_source_row(source) for source in sources)
     layer_rows = "\n".join(_layer_row(source) for source in sources)
+    room_detail_rows = "\n".join(_room_rows(source) for source in sources)
+    if not room_detail_rows:
+        room_detail_rows = '<tr><td colspan="10">未发现可绘制房间识别结果。</td></tr>'
     axis_detail_rows = "\n".join(_axis_rows(source) for source in sources)
     if not axis_detail_rows:
         axis_detail_rows = '<tr><td colspan="8">未发现可绘制轴线。</td></tr>'
@@ -105,8 +117,8 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
         column_detail_rows = '<tr><td colspan="9">未发现可绘制结构柱。</td></tr>'
 
     warning = ""
-    if not any(source.axes or source.columns or source.polylines or source.texts for source in sources):
-        warning = '<div class="warning">输入 JSON 中没有可绘制的 axes、columns、polylines 或 texts。</div>'
+    if not any(source.axes or source.columns or source.polylines or source.texts or source.boundaries or source.rooms for source in sources):
+        warning = '<div class="warning">输入 JSON 中没有可绘制的 axes、columns、polylines、texts、boundary_candidates 或 rooms。</div>'
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -228,6 +240,9 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
     body.hide-axes .kind-axes,
     body.hide-columns .kind-columns,
     body.hide-polylines .kind-polylines,
+    body.hide-boundaries .kind-boundaries,
+    body.hide-rooms .kind-rooms,
+    body.hide-room-labels .kind-room-labels,
     body.hide-texts .kind-texts,
     body.hide-axis-labels .kind-axis-labels {{
       display: none;
@@ -249,6 +264,9 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
         <label><input type="checkbox" data-toggle-class="hide-axes" checked> 轴线</label>
         <label><input type="checkbox" data-toggle-class="hide-axis-labels" checked> 轴号</label>
         <label><input type="checkbox" data-toggle-class="hide-columns" checked> 结构柱</label>
+        <label><input type="checkbox" data-toggle-class="hide-rooms" checked> 房间识别结果</label>
+        <label><input type="checkbox" data-toggle-class="hide-room-labels" checked> 房间标注</label>
+        <label><input type="checkbox" data-toggle-class="hide-boundaries"> 边界候选（需 --include-boundaries）</label>
         <label><input type="checkbox" data-toggle-class="hide-polylines"> 多段线（需 --include-polylines）</label>
         <label><input type="checkbox" data-toggle-class="hide-texts"> 文本点（需 --include-texts）</label>
       </div>
@@ -274,6 +292,13 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
         <table>
           <thead><tr><th>数据源</th><th>图层</th><th>轴线</th><th>结构柱</th><th>多段线</th></tr></thead>
           <tbody>{layer_rows}</tbody>
+        </table>
+      </section>
+      <section style="grid-column: 1 / -1;">
+        <h2>房间识别明细（每个数据源前 500 条）</h2>
+        <table>
+          <thead><tr><th>数据源</th><th>#</th><th>房间ID</th><th>房号</th><th>房名</th><th>状态</th><th>匹配方式</th><th>置信度</th><th>边界/图层</th><th>问题</th></tr></thead>
+          <tbody>{room_detail_rows}</tbody>
         </table>
       </section>
       <section style="grid-column: 1 / -1;">
@@ -318,6 +343,7 @@ def _source_row(source: ReviewSource) -> str:
     return (
         f'<tr class="source-{source.index}"><td><code>{escape(str(source.path))}</code><br>{escape(source.name)}</td>'
         f"<td>axes: {len(source.axes)}<br>columns: {len(source.columns)}<br>"
+        f"rooms: {len(source.rooms)}<br>boundaries: {len(source.boundaries)}<br>"
         f"polylines: {len(source.polylines)}<br>texts: {len(source.texts)}</td></tr>"
     )
 
@@ -326,14 +352,24 @@ def _layer_row(source: ReviewSource) -> str:
     axis_counts = Counter(axis["layer"] for axis in source.axes)
     column_counts = Counter(column["layer"] for column in source.columns)
     polyline_counts = Counter(polyline["layer"] for polyline in source.polylines)
-    layers = sorted(set(axis_counts) | set(column_counts) | set(polyline_counts))
+    boundary_counts = Counter(boundary["layer"] for boundary in source.boundaries)
+    room_counts = Counter(room["layer"] for room in source.rooms if room["layer"])
+    layers = sorted(set(axis_counts) | set(column_counts) | set(polyline_counts) | set(boundary_counts) | set(room_counts))
     if not layers:
         return f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td colspan="4">无图层数据</td></tr>'
     return "\n".join(
         f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td>{escape(layer)}</td>'
-        f"<td>{axis_counts.get(layer, 0)}</td><td>{column_counts.get(layer, 0)}</td><td>{polyline_counts.get(layer, 0)}</td></tr>"
+        f"<td>{axis_counts.get(layer, 0)}</td><td>{column_counts.get(layer, 0)}</td>"
+        f"<td>{polyline_counts.get(layer, 0) + boundary_counts.get(layer, 0) + room_counts.get(layer, 0)}</td></tr>"
         for layer in layers
     )
+
+
+def _room_rows(source: ReviewSource) -> str:
+    rows = []
+    for index, room in enumerate(source.rooms[:500], start=1):
+        rows.append(_room_row(source, index, room))
+    return "\n".join(rows)
 
 
 def _axis_rows(source: ReviewSource) -> str:
@@ -390,6 +426,68 @@ def _normalize_column(column: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _room_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(payload.get("room_candidates"), list):
+        return payload["room_candidates"]
+    if isinstance(payload.get("rooms"), list):
+        return payload["rooms"]
+    return []
+
+
+def _normalize_boundary(boundary: dict[str, Any]) -> dict[str, Any]:
+    points = [_point(point) for point in boundary.get("polygon_cad", []) if _point(point) is not None]
+    return {
+        "boundary_id": str(boundary.get("boundary_id") or ""),
+        "layer": str(boundary.get("layer") or ""),
+        "points": points,
+        "area": boundary.get("area_cad"),
+        "metadata": boundary.get("metadata") or {},
+    }
+
+
+def _normalize_room(room: dict[str, Any]) -> dict[str, Any]:
+    if "room_candidate_id" in room:
+        boundary = room.get("boundary") or {}
+        points = [_point(point) for point in boundary.get("polygon_cad", []) if _point(point) is not None]
+        label_center = _point(room.get("label_center"))
+        issue_codes = [str(issue.get("issue_code") or "") for issue in room.get("issues", []) if isinstance(issue, dict)]
+        return {
+            "room_id": str(room.get("room_candidate_id") or ""),
+            "room_number": str(room.get("room_number") or ""),
+            "room_name": str(room.get("room_name") or ""),
+            "status": str(room.get("status") or ""),
+            "match_method": str(room.get("match_method") or ""),
+            "confidence": room.get("confidence"),
+            "boundary_id": str(boundary.get("boundary_id") or ""),
+            "layer": str(boundary.get("layer") or ""),
+            "points": points,
+            "label_center": label_center,
+            "issue_codes": issue_codes,
+            "drawable": bool(points or label_center is not None),
+        }
+    basic_info = room.get("basic_info") or {}
+    geometry = room.get("geometry") or {}
+    review = room.get("review") or {}
+    evidence = room.get("evidence") or {}
+    cad_source = evidence.get("cad_source") or {}
+    points = [_point(point) for point in geometry.get("polygon_cad", []) if _point(point) is not None]
+    issue_codes = [str(issue.get("issue_code") or "") for issue in room.get("issues", []) if isinstance(issue, dict)]
+    return {
+        "room_id": str(room.get("room_uid") or ""),
+        "room_number": str(basic_info.get("room_number") or ""),
+        "room_name": str(basic_info.get("room_name") or ""),
+        "status": str(review.get("status") or room.get("final_status") or ""),
+        "match_method": str(geometry.get("geometry_source") or ""),
+        "confidence": (room.get("confidence") or {}).get("overall"),
+        "boundary_id": str(cad_source.get("boundary_id") or ""),
+        "layer": str(cad_source.get("boundary_layer") or ""),
+        "points": points,
+        "label_center": None,
+        "issue_codes": issue_codes,
+        "drawable": bool(points),
+    }
+
+
 def _normalize_text(text: dict[str, Any]) -> dict[str, Any]:
     return {
         "text": str(text.get("text") or "").strip(),
@@ -413,6 +511,9 @@ def _bounds_for_sources(sources: list[ReviewSource]) -> BBox | None:
         points.extend(point for axis in source.axes for point in axis["points"])
         points.extend(point for column in source.columns for point in column["polygon"])
         points.extend(column["center"] for column in source.columns if column["center"] is not None)
+        points.extend(point for boundary in source.boundaries for point in boundary["points"])
+        points.extend(point for room in source.rooms for point in room["points"])
+        points.extend(room["label_center"] for room in source.rooms if room["label_center"] is not None)
         points.extend(point for polyline in source.polylines for point in polyline["points"])
         points.extend(text["position"] for text in source.texts if text["position"] is not None)
     if not points:
@@ -446,6 +547,8 @@ def _review_svg(sources: list[ReviewSource], bounds: BBox) -> str:
     labels = []
     for source in sources:
         color = _source_color(source.index)
+        geometry.extend(_boundary_shape(source, boundary, stroke_width) for boundary in source.boundaries)
+        geometry.extend(_room_shape(source, room, stroke_width) for room in source.rooms)
         geometry.extend(_column_shape(source, column, color, stroke_width) for column in source.columns)
         geometry.extend(_polyline_shape(source, polyline, color, stroke_width) for polyline in source.polylines)
         geometry.extend(_axis_shape(source, axis, color, stroke_width) for axis in source.axes)
@@ -454,6 +557,7 @@ def _review_svg(sources: list[ReviewSource], bounds: BBox) -> str:
             for index, axis in enumerate(source.axes)
         )
         labels.extend(_text_marker(source, text, font_size) for text in source.texts)
+        labels.extend(_room_label(source, room, font_size) for room in source.rooms)
 
     return f"""<svg viewBox="{view_min_x:.3f} {view_min_y:.3f} {view_width:.3f} {view_height:.3f}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="JSON review map">
   <rect x="{view_min_x:.3f}" y="{view_min_y:.3f}" width="{view_width:.3f}" height="{view_height:.3f}" fill="#ffffff"/>
@@ -497,6 +601,34 @@ def _polyline_shape(source: ReviewSource, polyline: dict[str, Any], color: str, 
     )
 
 
+def _boundary_shape(source: ReviewSource, boundary: dict[str, Any], stroke_width: float) -> str:
+    points = boundary["points"]
+    if len(points) < 3:
+        return ""
+    path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + " Z"
+    title = escape(f'{source.name} / boundary / {boundary["boundary_id"]} / {boundary["layer"]}')
+    return (
+        f'<path class="source-{source.index} kind-boundaries" d="{path}" fill="none" stroke="#64748b" '
+        f'stroke-width="{stroke_width * 0.45:.3f}" stroke-dasharray="{stroke_width * 2:.3f} {stroke_width * 1.5:.3f}" '
+        f'opacity="0.42"><title>{title}</title></path>'
+    )
+
+
+def _room_shape(source: ReviewSource, room: dict[str, Any], stroke_width: float) -> str:
+    points = room["points"]
+    if len(points) < 3:
+        return ""
+    color = _room_status_color(room["status"])
+    path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + " Z"
+    title = escape(
+        f'{source.name} / room / {room["room_id"]} / {room["room_number"]} {room["room_name"]} / {room["status"]}'
+    )
+    return (
+        f'<path class="source-{source.index} kind-rooms" d="{path}" fill="{color}" fill-opacity="0.16" '
+        f'stroke="{color}" stroke-width="{stroke_width * 0.9:.3f}" opacity="0.92"><title>{title}</title></path>'
+    )
+
+
 def _column_shape(source: ReviewSource, column: dict[str, Any], color: str, stroke_width: float) -> str:
     title = escape(f'{source.name} / columns / {column["column_id"]} / {column["layer"]}')
     points = column["polygon"]
@@ -534,6 +666,16 @@ def _text_marker(source: ReviewSource, text: dict[str, Any], font_size: float) -
     if position is None or not text["text"]:
         return ""
     return _svg_text(source, position, text["text"], font_size * 0.55, class_name="kind-texts")
+
+
+def _room_label(source: ReviewSource, room: dict[str, Any], font_size: float) -> str:
+    position = room["label_center"] or _polygon_center(room["points"])
+    if position is None:
+        return ""
+    text = " ".join(value for value in [room["room_number"], room["room_name"]] if value) or room["room_id"]
+    if not text:
+        return ""
+    return _svg_text(source, position, text, font_size * 0.55, class_name="kind-room-labels")
 
 
 def _svg_text(source: ReviewSource, point: Point, text: str, font_size: float, class_name: str) -> str:
@@ -577,6 +719,19 @@ def _column_row(source: ReviewSource, index: int, column: dict[str, Any]) -> str
         f"<td>{escape(column['column_id'])}</td><td>{escape(column['layer'])}</td><td>{escape(column['source'])}</td>"
         f"<td>{_format_number(column.get('area'))}</td><td>{escape(size_text)}</td>"
         f"<td><code>{escape(bbox_text)}</code></td><td>{len(column['polygon'])}</td></tr>"
+    )
+
+
+def _room_row(source: ReviewSource, index: int, room: dict[str, Any]) -> str:
+    issue_text = ", ".join(code for code in room["issue_codes"] if code) or "-"
+    boundary_text = room["boundary_id"] or "-"
+    if room["layer"]:
+        boundary_text = f"{boundary_text}<br><code>{escape(room['layer'])}</code>"
+    return (
+        f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td>{index}</td>'
+        f"<td>{escape(room['room_id'])}</td><td>{escape(room['room_number'])}</td><td>{escape(room['room_name'])}</td>"
+        f"<td>{escape(room['status'])}</td><td>{escape(room['match_method'])}</td>"
+        f"<td>{_format_number(room.get('confidence'))}</td><td>{boundary_text}</td><td>{escape(issue_text)}</td></tr>"
     )
 
 
@@ -647,6 +802,22 @@ def _nearest_label(point: Point, candidates: list[dict[str, Any]], max_distance:
 def _source_color(index: int) -> str:
     palette = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#be123c", "#4f46e5"]
     return palette[(index - 1) % len(palette)]
+
+
+def _room_status_color(status: str) -> str:
+    if status in {"matched", "auto_passed"}:
+        return "#16a34a"
+    if status in {"matched_fallback", "pending_downstream_check", "pending_pdf_check"}:
+        return "#f59e0b"
+    if status in {"auto_failed", "cad_auto_draft"}:
+        return "#dc2626"
+    return "#2563eb"
+
+
+def _polygon_center(points: list[Point]) -> Point | None:
+    if not points:
+        return None
+    return (sum(point[0] for point in points) / len(points), sum(point[1] for point in points) / len(points))
 
 
 if __name__ == "__main__":

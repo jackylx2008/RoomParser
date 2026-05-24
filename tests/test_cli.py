@@ -31,6 +31,27 @@ def test_cli_extract_cad_writes_json(tmp_path: Path) -> None:
     assert payload["axes"][0]["points"] == [[0.0, 2.0], [1.0, 2.0]]
 
 
+def test_cli_extract_cad_visible_only_skips_frozen_layers(tmp_path: Path) -> None:
+    dxf_path = tmp_path / "sample_visible.dxf"
+    out_path = tmp_path / "cad_raw.json"
+    doc = ezdxf.new()
+    doc.layers.add("FROZEN")
+    doc.layers.get("FROZEN").freeze()
+    msp = doc.modelspace()
+    visible_text = msp.add_text("办公室", dxfattribs={"layer": "VISIBLE", "height": 350})
+    visible_text.dxf.insert = (1, 2)
+    hidden_text = msp.add_text("隐藏", dxfattribs={"layer": "FROZEN", "height": 350})
+    hidden_text.dxf.insert = (3, 4)
+    doc.saveas(dxf_path)
+
+    assert main(["extract-cad", "--dxf", str(dxf_path), "--out", str(out_path), "--visible-only"]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert [text["text"] for text in payload["texts"]] == ["办公室"]
+    frozen_layer = next(layer for layer in payload["layers"] if layer["name"] == "FROZEN")
+    assert frozen_layer["entity_count"] == 0
+
+
 def test_cli_extract_cad_axis_only_uses_axis_rules(tmp_path: Path) -> None:
     dxf_path = tmp_path / "sample_axis.dxf"
     out_path = tmp_path / "cad_raw_axis.json"

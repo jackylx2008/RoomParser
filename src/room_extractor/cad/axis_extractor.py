@@ -4,6 +4,7 @@ from math import cos, hypot, pi, radians, sin
 
 from ezdxf.document import Drawing as DxfDrawing
 
+from room_extractor.cad.entity_filter import iter_modelspace_entities
 from room_extractor.geometry import calculate_bbox
 from room_extractor.models.drawing import CadAxisEntity
 from room_extractor.models.issue import Issue
@@ -17,11 +18,15 @@ AXIS_LAYER_MARKERS = ("AXIS", "GRID", "轴网", "轴线")
 AXIS_ENTITY_TYPES = {"LINE", "LWPOLYLINE", "POLYLINE", "ARC"}
 
 
-def extract_axes(doc: DxfDrawing, axis_layers: list[str] | None = None) -> tuple[list[CadAxisEntity], list[Issue]]:
+def extract_axes(
+    doc: DxfDrawing,
+    axis_layers: list[str] | None = None,
+    visible_only: bool = False,
+) -> tuple[list[CadAxisEntity], list[Issue]]:
     """Extract line-like entities from DXF axis layers."""
     axes: list[CadAxisEntity] = []
     issues: list[Issue] = []
-    for entity in doc.modelspace():
+    for entity in iter_modelspace_entities(doc, visible_only=visible_only):
         if entity.dxftype() not in AXIS_ENTITY_TYPES:
             continue
         layer = str(getattr(entity.dxf, "layer", "0"))

@@ -20,6 +20,8 @@ def test_room_text_parser_recognizes_room_numbers() -> None:
 
 def test_room_text_parser_recognizes_room_name_and_mojibake() -> None:
     assert extract_room_name("办公室") == "办公室"
+    assert extract_room_name("强电") == "强电"
+    assert extract_room_name("风井") == "风井"
     assert normalize_cad_text("0-Ãæ»ýÏß") == "0-面积线"
     parsed = parse_room_text(
         CadTextEntity(

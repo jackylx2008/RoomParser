@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze_parser = subparsers.add_parser("analyze-layers", help="Analyze DXF layers and entity counts.")
     analyze_parser.add_argument("--dxf", required=True, help="Path to the input DXF file.")
+    analyze_parser.add_argument("--visible-only", action="store_true", help="Ignore entities on off/frozen layers or marked invisible.")
     analyze_parser.set_defaults(func=_run_analyze_layers)
 
     extract_parser = subparsers.add_parser("extract-cad", help="Extract raw CAD entities to JSON.")
@@ -47,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser.add_argument("--axis-rules", help="Path to axis layer YAML. Defaults to config/axis_layer_rules.yaml.")
     extract_parser.add_argument("--columns-only", action="store_true", help="Only extract configured structural column entities.")
     extract_parser.add_argument("--column-rules", help="Path to column layer YAML. Defaults to config/column_layer_rules.yaml.")
+    extract_parser.add_argument("--visible-only", action="store_true", help="Ignore entities on off/frozen layers or marked invisible.")
     extract_parser.set_defaults(func=_run_extract_cad)
 
     column_features_parser = subparsers.add_parser(
@@ -94,6 +96,14 @@ def build_parser() -> argparse.ArgumentParser:
     rooms_parser.add_argument("--floor", help="Optional floor value written to candidates.")
     rooms_parser.add_argument("--min-boundary-area", type=float, default=1_000_000.0, help="Minimum CAD polygon area kept as a boundary.")
     rooms_parser.add_argument("--max-boundary-area", type=float, default=2_000_000_000.0, help="Maximum CAD polygon area kept as a boundary.")
+    rooms_parser.add_argument(
+        "--boundary-layer",
+        action="append",
+        dest="boundary_layers",
+        help="Layer rule to keep as a room boundary. May be repeated; order defines priority.",
+    )
+    rooms_parser.add_argument("--axes", help="Optional axis cad_raw JSON to record as spatial context.")
+    rooms_parser.add_argument("--columns", help="Optional column cad_raw JSON to add column overlap metadata.")
     rooms_parser.set_defaults(func=_run_build_room_candidates)
 
     review_map_parser = subparsers.add_parser("export-review-map", help="Export an HTML/SVG visual QA map for room candidates.")
@@ -177,7 +187,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _run_analyze_layers(args: argparse.Namespace) -> int:
     dxf_path = Path(args.dxf)
     doc = load_dxf(dxf_path)
-    result = analyze_layers(doc, dxf_path)
+    result = analyze_layers(doc, dxf_path, visible_only=bool(args.visible_only))
     print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
     return 0
 
@@ -195,6 +205,7 @@ def _run_extract_cad(args: argparse.Namespace) -> int:
         axis_rules=axis_rules,
         columns_only=bool(args.columns_only),
         column_rules=column_rules,
+        visible_only=bool(args.visible_only),
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -264,12 +275,17 @@ def _run_build_room_candidates(args: argparse.Namespace) -> int:
     out_path = Path(args.out)
     cad_raw = CadRawExtraction.model_validate_json(cad_path.read_text(encoding="utf-8"))
     labels = RoomLabelCandidateSet.model_validate_json(labels_path.read_text(encoding="utf-8"))
+    axes_raw = CadRawExtraction.model_validate_json(Path(args.axes).read_text(encoding="utf-8")) if args.axes else None
+    columns_raw = CadRawExtraction.model_validate_json(Path(args.columns).read_text(encoding="utf-8")) if args.columns else None
     result = build_room_candidates(
         cad_raw,
         labels,
         floor=args.floor,
         min_boundary_area=float(args.min_boundary_area),
         max_boundary_area=float(args.max_boundary_area),
+        boundary_layers=args.boundary_layers,
+        axes_raw=axes_raw,
+        columns_raw=columns_raw,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")

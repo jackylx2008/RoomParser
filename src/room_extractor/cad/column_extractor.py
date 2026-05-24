@@ -5,6 +5,7 @@ from math import cos, radians, sin
 from ezdxf.document import Drawing as DxfDrawing
 from shapely.geometry import Polygon
 
+from room_extractor.cad.entity_filter import filter_visible_entities, iter_modelspace_entities
 from room_extractor.config.column_rules import ColumnLayerRules
 from room_extractor.geometry import calculate_bbox, calculate_polygon_area
 from room_extractor.models.drawing import CadColumnEntity
@@ -22,12 +23,13 @@ COLUMN_ENTITY_TYPES = {"HATCH", "LWPOLYLINE", "POLYLINE", "INSERT"}
 def extract_columns(
     doc: DxfDrawing,
     column_rules: ColumnLayerRules | None = None,
+    visible_only: bool = False,
 ) -> tuple[list[CadColumnEntity], list[Issue]]:
     """Extract structural columns from configured DXF layers."""
     columns: list[CadColumnEntity] = []
     issues: list[Issue] = []
     entity_types = set(column_rules.column_entity_types if column_rules is not None and column_rules.column_entity_types else COLUMN_ENTITY_TYPES)
-    for entity in _iter_column_source_entities(doc, column_rules):
+    for entity in _iter_column_source_entities(doc, column_rules, visible_only=visible_only):
         if entity.dxftype() not in entity_types:
             continue
         layer = str(getattr(entity.dxf, "layer", "0"))
@@ -46,12 +48,16 @@ def extract_columns(
     return columns, issues
 
 
-def _iter_column_source_entities(doc: DxfDrawing, column_rules: ColumnLayerRules | None) -> list[object]:
-    entities = list(doc.modelspace())
+def _iter_column_source_entities(
+    doc: DxfDrawing,
+    column_rules: ColumnLayerRules | None,
+    visible_only: bool = False,
+) -> list[object]:
+    entities = list(iter_modelspace_entities(doc, visible_only=visible_only))
     if column_rules is not None and not column_rules.expand_insert_virtual_entities:
         return entities
-    for insert in doc.modelspace().query("INSERT"):
-        entities.extend(_safe_virtual_entities(insert))
+    for insert in filter_visible_entities(doc, doc.modelspace().query("INSERT"), visible_only=visible_only):
+        entities.extend(filter_visible_entities(doc, _safe_virtual_entities(insert), visible_only=visible_only))
     return entities
 
 

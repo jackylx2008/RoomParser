@@ -516,8 +516,71 @@ python -m pytest
 当前结果：
 
 ```text
-47 passed
+50 passed
 ```
+
+## 最新接续实验：ROOM_WALL 可见实体房间识别
+
+基于人工处理后的 DXF：
+
+- 输入：`data/input/dxf/L2_20.00m平面图-ROOM_WALL.dxf`
+- 规则要求：仅使用未隐藏、未冻结、未设置 invisible 的 modelspace 图元。
+- 已知房间边界参考图层：
+  - `0-面积线`
+  - `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`
+  - `05-L2-WALL$1$VT-WALL-总包`
+- 辅助上下文：
+  - 轴线 JSON：`data/output/json/cad_raw_axis_check.json`
+  - 柱子 JSON：`data/output/json/cad_raw_columns_from_full_real.json`
+
+本轮新增能力：
+
+- `extract-cad` / `analyze-layers` 新增 `--visible-only`，用于过滤冻结、关闭或 invisible 图元。
+- `build-room-candidates` 新增 `--boundary-layer`，可按顺序指定边界候选图层与优先级。
+- `build-room-candidates` 新增 `--axes` / `--columns`，将轴线与柱子 JSON 写入 summary，并为边界候选增加柱重叠元数据。
+- 房名识别词表新增 `强电`、`弱电`、`风井`、`水井`。
+- 将 `强电`、`弱电`、`风井`、`水井`、`楼梯` 作为“房间型特殊空间”处理：即使无面积文字，也允许按面积线或墙体闭合 polygon 低置信度匹配。
+
+已生成输出：
+
+- `data/output/json/cad_raw_room_wall_visible.json`
+- `data/output/json/room_label_candidates_room_wall_visible.json`
+- `data/output/json/room_candidates_room_wall_visible.json`
+- `data/output/json/rooms_auto_room_wall_visible.json`
+- `data/output/reports/room_candidates_review_room_wall_visible.html`
+- `data/output/reports/json_review_room_recognition_room_wall.html`
+
+关键摘要：
+
+- 可见实体抽取：文本 `1310`，多段线 `9354`，柱候选 `885`。
+- 边界候选数：`404`
+  - `0-面积线`：`124`
+  - `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`：`2`
+  - `05-L2-WALL$1$VT-WALL-总包`：`278`
+- room label 候选数：`338`
+- room candidate 状态：
+  - `matched`：`58`
+  - `matched_fallback`：`212`
+  - `auto_failed`：`68`
+- `rooms_auto_room_wall_visible.json`：
+  - room 数：`338`
+  - 带 CAD geometry：`270`
+  - 缺失 CAD geometry：`68`
+- 柱辅助摘要：
+  - 输入柱子数：`750`
+  - 与柱 polygon 存在重叠的边界候选：`189`
+- `validate_json_html.py` 已扩展支持房间识别结果 JSON：
+  - 可绘制 `room_candidates[].boundary` 或 `rooms[].geometry.polygon_cad`
+  - 可绘制 `boundary_candidates`
+  - 可叠加轴线 JSON、柱子 JSON
+  - 输出房间识别明细表，显示房间 ID、房号、房名、状态、匹配方式、置信度、边界图层和 issue
+
+注意：PowerShell 中包含 `$1` 的图层名必须用单引号传参；双引号会把 `$1` 展开导致图层规则失真。
+
+文档同步：
+
+- README 已更新 `--visible-only`、`--boundary-layer`、`--axes`、`--columns`、房间型特殊空间、柱辅助元数据和房间识别 JSON 人工校核 HTML 的使用说明。
+- `validate_json_html.py` 的房间识别校核能力已在 README 和本进度文档同步记录。
 
 ## 已知边界
 

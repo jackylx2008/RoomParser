@@ -19,6 +19,7 @@ class RoomBoundaryCandidate(BaseModel):
     polygon_cad: list[Point] = Field(default_factory=list)
     bbox_cad: BBox
     area_cad: float
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RoomCandidate(BaseModel):
@@ -38,6 +39,7 @@ class RoomCandidate(BaseModel):
     confidence: float = 0.0
     label: RoomLabelCandidate
     issues: list[Issue] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RoomCandidateSet(BaseModel):

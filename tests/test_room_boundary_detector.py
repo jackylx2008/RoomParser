@@ -35,6 +35,35 @@ def test_boundary_detector_filters_closed_polylines_by_area() -> None:
     assert boundaries[0].bbox_cad == (0, 0, 2000, 2000)
 
 
+def test_boundary_detector_can_filter_to_configured_layers() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(
+                layer="0-面积线",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (2000, 0), (2000, 2000), (0, 2000)],
+                bbox=(0, 0, 2000, 2000),
+                area=4_000_000,
+            ),
+            CadPolylineEntity(
+                layer="IFF-Furn",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (3000, 0), (3000, 3000), (0, 3000)],
+                bbox=(0, 0, 3000, 3000),
+                area=9_000_000,
+            ),
+        ],
+    )
+
+    boundaries = build_room_boundary_candidates(cad_raw, boundary_layers=["0-面积线"])
+
+    assert len(boundaries) == 1
+    assert boundaries[0].layer == "0-面积线"
+
+
 def test_room_candidate_builder_matches_label_to_smallest_containing_polygon() -> None:
     cad_raw = CadRawExtraction(
         source_file="sample.dxf",
@@ -245,3 +274,41 @@ def test_room_candidate_builder_does_not_fallback_match_special_space_without_ar
     assert room.match_method == "unmatched_classified"
     assert room.boundary is None
     assert room.issues[-1].issue_code == "SPECIAL_SPACE_NO_AREA_BOUNDARY"
+
+
+def test_room_candidate_builder_fallback_matches_room_like_special_space_without_area() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(
+                layer="05-L2-WALL$1$VT-WALL-总包",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (2000, 0), (2000, 2000), (0, 2000)],
+                bbox=(0, 0, 2000, 2000),
+                area=4_000_000,
+            )
+        ],
+    )
+    labels = RoomLabelCandidateSet(
+        source_file="sample.dxf",
+        candidates=[
+            RoomLabelCandidate(
+                candidate_id="label_0001",
+                room_name="强电",
+                center=(2500, 1000),
+                bbox=(2400, 900, 2600, 1100),
+                confidence=0.4,
+            )
+        ],
+    )
+
+    room = build_room_candidates(
+        cad_raw,
+        labels,
+        boundary_layers=["0-面积线", "05-L2-WALL$1$VT-WALL-总包"],
+    ).room_candidates[0]
+
+    assert room.status == "matched_fallback"
+    assert room.boundary is not None
+    assert room.boundary.layer == "05-L2-WALL$1$VT-WALL-总包"

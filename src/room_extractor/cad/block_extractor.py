@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ezdxf.document import Drawing as DxfDrawing
 
+from room_extractor.cad.entity_filter import iter_modelspace_entities
 from room_extractor.models.drawing import CadBlockEntity
 from room_extractor.models.issue import Issue
 from room_extractor.utils.logger import get_logger
@@ -9,11 +10,13 @@ from room_extractor.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def extract_blocks(doc: DxfDrawing) -> tuple[list[CadBlockEntity], list[Issue]]:
+def extract_blocks(doc: DxfDrawing, visible_only: bool = False) -> tuple[list[CadBlockEntity], list[Issue]]:
     """Extract INSERT entities and attached ATTRIB values from modelspace."""
     blocks: list[CadBlockEntity] = []
     issues: list[Issue] = []
-    for entity in doc.modelspace().query("INSERT"):
+    for entity in iter_modelspace_entities(doc, visible_only=visible_only):
+        if entity.dxftype() != "INSERT":
+            continue
         try:
             insert = entity.dxf.insert
             attributes = {

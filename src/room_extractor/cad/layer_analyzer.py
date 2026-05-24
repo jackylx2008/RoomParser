@@ -4,10 +4,11 @@ from pathlib import Path
 
 from ezdxf.document import Drawing as DxfDrawing
 
+from room_extractor.cad.entity_filter import iter_modelspace_entities
 from room_extractor.models.drawing import LayerAnalysis, LayerSummary
 
 
-def analyze_layers(doc: DxfDrawing, source_file: str | Path = "") -> LayerAnalysis:
+def analyze_layers(doc: DxfDrawing, source_file: str | Path = "", visible_only: bool = False) -> LayerAnalysis:
     """Count modelspace entities by layer and relevant DXF entity type."""
     layers: dict[str, LayerSummary] = {}
     for layer in doc.layers:
@@ -15,7 +16,7 @@ def analyze_layers(doc: DxfDrawing, source_file: str | Path = "") -> LayerAnalys
         layers.setdefault(name, LayerSummary(name=name))
 
     totals = LayerSummary(name="__total__")
-    for entity in doc.modelspace():
+    for entity in iter_modelspace_entities(doc, visible_only=visible_only):
         layer_name = getattr(entity.dxf, "layer", "0")
         summary = layers.setdefault(layer_name, LayerSummary(name=layer_name))
         _count_entity(summary, entity)
@@ -45,4 +46,3 @@ def _count_entity(summary: LayerSummary, entity: object) -> None:
         summary.polyline_count += 1
         if bool(getattr(entity, "is_closed", False)):
             summary.closed_polyline_count += 1
-

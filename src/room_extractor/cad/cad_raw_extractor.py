@@ -22,16 +22,17 @@ def extract_cad_raw(
     axis_rules: AxisLayerRules | None = None,
     columns_only: bool = False,
     column_rules: ColumnLayerRules | None = None,
+    visible_only: bool = False,
 ) -> CadRawExtraction:
     """Build the Phase 1 cad_raw extraction payload."""
     if axis_only and columns_only:
         raise ValueError("--axis-only and --columns-only cannot be used together.")
-    layer_analysis = analyze_layers(doc, source_file)
+    layer_analysis = analyze_layers(doc, source_file, visible_only=visible_only)
     if axis_only:
         label_layers = axis_rules.axis_label_layers if axis_rules is not None else None
         axis_layers = axis_rules.axis_layers if axis_rules is not None else None
-        texts, text_issues = extract_texts(doc, layers=label_layers)
-        axes, axis_issues = extract_axes(doc, axis_layers=axis_layers)
+        texts, text_issues = extract_texts(doc, layers=label_layers, visible_only=visible_only)
+        axes, axis_issues = extract_axes(doc, axis_layers=axis_layers, visible_only=visible_only)
         kept_layers = {*(axis_layers or []), *(label_layers or [])}
         return CadRawExtraction(
             source_file=Path(source_file).name,
@@ -45,7 +46,7 @@ def extract_cad_raw(
     if columns_only:
         column_layers = column_rules.column_layers if column_rules is not None else None
         column_block_layers = column_rules.column_block_layers if column_rules is not None else None
-        columns, column_issues = extract_columns(doc, column_rules=column_rules)
+        columns, column_issues = extract_columns(doc, column_rules=column_rules, visible_only=visible_only)
         kept_layers = {*(column_layers or []), *(column_block_layers or [])}
         return CadRawExtraction(
             source_file=Path(source_file).name,
@@ -58,11 +59,11 @@ def extract_cad_raw(
             issues=column_issues,
         )
 
-    texts, text_issues = extract_texts(doc)
-    blocks, block_issues = extract_blocks(doc)
-    polylines, polyline_issues = extract_polylines(doc)
-    axes, axis_issues = extract_axes(doc)
-    columns, column_issues = extract_columns(doc)
+    texts, text_issues = extract_texts(doc, visible_only=visible_only)
+    blocks, block_issues = extract_blocks(doc, visible_only=visible_only)
+    polylines, polyline_issues = extract_polylines(doc, visible_only=visible_only)
+    axes, axis_issues = extract_axes(doc, visible_only=visible_only)
+    columns, column_issues = extract_columns(doc, visible_only=visible_only)
     return CadRawExtraction(
         source_file=Path(source_file).name,
         layers=layer_analysis.layers,
