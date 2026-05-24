@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from room_extractor.extraction import build_room_boundary_candidates, build_room_candidates
-from room_extractor.models.drawing import CadPolylineEntity, CadRawExtraction
+from room_extractor.models.drawing import CadColumnEntity, CadPolylineEntity, CadRawExtraction
 from room_extractor.models.room_label import RoomLabelCandidate, RoomLabelCandidateSet
 
 
@@ -62,6 +62,78 @@ def test_boundary_detector_can_filter_to_configured_layers() -> None:
 
     assert len(boundaries) == 1
     assert boundaries[0].layer == "0-面积线"
+
+
+def test_boundary_detector_polygonizes_exploded_wall_lines_on_configured_layers() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(
+                layer="05-L2-WALL$1$VT-WALL-总包",
+                entity_type="LINE",
+                closed=False,
+                points=[(0, 0), (2000, 0)],
+                bbox=(0, 0, 2000, 0),
+            ),
+            CadPolylineEntity(
+                layer="05-L2-WALL$1$VT-WALL-总包",
+                entity_type="LINE",
+                closed=False,
+                points=[(2000, 0), (2000, 2000)],
+                bbox=(2000, 0, 2000, 2000),
+            ),
+            CadPolylineEntity(
+                layer="05-L2-WALL$1$VT-WALL-总包",
+                entity_type="LINE",
+                closed=False,
+                points=[(2000, 2000), (0, 2000)],
+                bbox=(0, 2000, 2000, 2000),
+            ),
+            CadPolylineEntity(
+                layer="05-L2-WALL$1$VT-WALL-总包",
+                entity_type="LINE",
+                closed=False,
+                points=[(0, 2000), (0, 0)],
+                bbox=(0, 0, 0, 2000),
+            ),
+        ],
+    )
+
+    boundaries = build_room_boundary_candidates(
+        cad_raw,
+        boundary_layers=["05-L2-WALL$1$VT-WALL-总包"],
+    )
+
+    assert len(boundaries) == 1
+    assert boundaries[0].entity_type == "SEGMENT_POLYGONIZED"
+    assert boundaries[0].area_cad == 4_000_000
+    assert boundaries[0].metadata["boundary_source"] == "polygonized_open_segments"
+
+
+def test_boundary_detector_can_use_column_edge_as_room_boundary_segment() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(layer="A-WALL", entity_type="LINE", closed=False, points=[(0, 0), (2000, 0)], bbox=(0, 0, 2000, 0)),
+            CadPolylineEntity(layer="A-WALL", entity_type="LINE", closed=False, points=[(0, 0), (0, 2000)], bbox=(0, 0, 0, 2000)),
+            CadPolylineEntity(layer="A-WALL", entity_type="LINE", closed=False, points=[(0, 2000), (2000, 2000)], bbox=(0, 2000, 2000, 2000)),
+        ],
+    )
+    columns = [
+        CadColumnEntity(
+            column_id="column_00001",
+            layer="A-STR-COLM",
+            entity_type="HATCH",
+            source="hatch_boundary",
+            polygon=[(2000, 0), (2100, 0), (2100, 2000), (2000, 2000)],
+            bbox=(2000, 0, 2100, 2000),
+        )
+    ]
+
+    boundaries = build_room_boundary_candidates(cad_raw, boundary_layers=["A-WALL"], columns=columns)
+
+    assert any(boundary.area_cad == 4_000_000 for boundary in boundaries)
+    assert all(boundary.metadata["column_edge_segments_used"] == 4 for boundary in boundaries)
 
 
 def test_room_candidate_builder_matches_label_to_smallest_containing_polygon() -> None:
@@ -154,6 +226,52 @@ def test_room_candidate_builder_prefers_boundary_layer_over_smaller_fallback_pol
     assert room.boundary is not None
     assert room.boundary.layer == "A-AREA-BNDY"
     assert room.boundary.area_cad == 25_000_000
+
+
+def test_room_candidate_builder_uses_text_area_when_mtext_anchor_falls_in_neighbor_room() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(
+                layer="A-WALL",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (9000, 0), (9000, 10_000), (0, 10_000)],
+                bbox=(0, 0, 9000, 10_000),
+                area=90_000_000,
+            ),
+            CadPolylineEntity(
+                layer="Defpoints",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(10_500, 0), (17_100, 0), (17_100, 10_000), (10_500, 10_000)],
+                bbox=(10_500, 0, 17_100, 10_000),
+                area=66_000_000,
+            ),
+        ],
+    )
+    labels = RoomLabelCandidateSet(
+        source_file="sample.dxf",
+        candidates=[
+            RoomLabelCandidate(
+                candidate_id="label_0001",
+                room_number="2-07",
+                room_name="服务间",
+                area=66.0,
+                center=(8000, 5000),
+                bbox=(7600, 4600, 8400, 5400),
+                confidence=1.0,
+            )
+        ],
+    )
+
+    room = build_room_candidates(cad_raw, labels, boundary_layers=["A-WALL", "Defpoints"]).room_candidates[0]
+
+    assert room.status == "matched_fallback"
+    assert room.match_method == "text_area_nearby_boundary_match"
+    assert room.boundary is not None
+    assert room.boundary.layer == "Defpoints"
+    assert room.boundary.area_cad == 66_000_000
 
 
 def test_room_candidate_builder_marks_unmatched_label() -> None:

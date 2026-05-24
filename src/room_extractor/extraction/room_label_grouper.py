@@ -38,7 +38,27 @@ def _cluster_texts(texts: list[RoomTextParse]) -> list[list[RoomTextParse]]:
             groups.append([text])
         else:
             target.append(text)
-    return groups
+    return [subgroup for group in groups for subgroup in _split_multi_room_group(group)]
+
+
+def _split_multi_room_group(group: list[RoomTextParse]) -> list[list[RoomTextParse]]:
+    room_number_texts = [item for item in group if item.room_number]
+    room_numbers = {item.room_number for item in room_number_texts if item.room_number}
+    if len(room_numbers) <= 1:
+        return [group]
+
+    subgroups: list[list[RoomTextParse]] = [[seed] for seed in room_number_texts]
+    assigned = {id(seed) for seed in room_number_texts}
+    for text in group:
+        if id(text) in assigned:
+            continue
+        nearest_index = min(range(len(room_number_texts)), key=lambda index: _distance(text, room_number_texts[index]))
+        nearest_seed = room_number_texts[nearest_index]
+        if _distance(text, nearest_seed) <= _cluster_threshold([text, nearest_seed]):
+            subgroups[nearest_index].append(text)
+        else:
+            subgroups.append([text])
+    return subgroups
 
 
 def _find_nearest_group(text: RoomTextParse, groups: list[list[RoomTextParse]]) -> list[RoomTextParse] | None:
@@ -69,6 +89,8 @@ def _build_candidate(index: int, source_file: str, group: list[RoomTextParse], f
     ordered = sorted(group, key=lambda item: (-len(item.matched_types), item.source_index))
     room_number = _first_value(ordered, "room_number")
     room_name = _first_value(ordered, "room_name")
+    room_name_raw = _first_value(ordered, "room_name_raw")
+    room_category = _first_value(ordered, "room_category")
     area = _first_value(ordered, "area")
     bbox = _bbox(group)
     center = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
@@ -79,6 +101,8 @@ def _build_candidate(index: int, source_file: str, group: list[RoomTextParse], f
         floor=floor,
         room_number=room_number,
         room_name=room_name,
+        room_name_raw=room_name_raw,
+        room_category=room_category,
         area=area,
         center=center,
         bbox=bbox,

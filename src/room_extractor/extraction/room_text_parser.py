@@ -9,13 +9,19 @@ from room_extractor.utils.text_normalizer import normalize_cad_text
 
 AREA_RE = re.compile(r"(?:面积[:：]?\s*)?(\d+(?:\.\d+)?)\s*(?:㎡|m²|m2|平方米)", re.IGNORECASE)
 AREA_NO_UNIT_RE = re.compile(r"^面积[:：]?\s*(\d+(?:\.\d+)?)$")
-ROOM_NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])(?:[A-Z]?\d{1,3}-\d{1,4}[A-Z]?|\d{2,4}[A-Z]?|[A-Z]{1,4}\d{1,3}(?:-[A-Z])?)(?![A-Za-z0-9])")
-ROOM_NAME_KEYWORDS = (
+ROOM_NUMBER_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Z]\.(?:L\d+|\d+)\.[A-Z]\d{3}(?:-[A-Z]\d{2})?|[A-Z]?\d{1,3}-\d{1,4}[A-Z]?|\d{2,4}[A-Z]?|[A-Z]{1,4}\d{1,3}(?:-[A-Z])?)(?![A-Za-z0-9])"
+)
+ROOM_CATEGORY_KEYWORDS = (
+    "空调机房",
+    "排油烟井",
+    "新风井",
+    "回风",
     "办公室",
     "会议室",
     "贵宾室",
-    "卫生间",
     "无障碍卫生间",
+    "卫生间",
     "服务间",
     "清洁间",
     "后勤用房",
@@ -36,12 +42,14 @@ ROOM_NAME_KEYWORDS = (
     "大厅",
     "展厅",
 )
+ROOM_NAME_KEYWORDS = ROOM_CATEGORY_KEYWORDS
 
 
 def parse_room_text(text: CadTextEntity, source_index: int = 0) -> RoomTextParse:
     """Parse room number, name and area from one CAD text entity."""
     normalized = normalize_cad_text(text.text)
     room_name = extract_room_name(normalized)
+    room_category = extract_room_category(normalized)
     room_number = extract_room_number(normalized)
     area = extract_area(normalized)
     matched_types: list[str] = []
@@ -60,6 +68,8 @@ def parse_room_text(text: CadTextEntity, source_index: int = 0) -> RoomTextParse
         height=text.height,
         room_number=room_number,
         room_name=room_name,
+        room_name_raw=room_name,
+        room_category=room_category,
         area=area,
         matched_types=matched_types,
     )
@@ -75,7 +85,9 @@ def extract_area(text: str) -> float | None:
 
 def extract_room_number(text: str) -> str | None:
     for line in _meaningful_lines(text):
-        if _looks_like_area_line(line) or _looks_like_door_mark(line):
+        if _looks_like_door_mark(line):
+            continue
+        if _looks_like_area_line(line) and not re.search(r"[A-Z]|\d+\s*-\s*\d+", line, re.IGNORECASE):
             continue
         match = ROOM_NUMBER_RE.search(line)
         if match:
@@ -88,6 +100,16 @@ def extract_room_name(text: str) -> str | None:
         if _looks_like_area_line(line) or _looks_like_english(line):
             continue
         for keyword in sorted(ROOM_NAME_KEYWORDS, key=len, reverse=True):
+            if keyword in line:
+                return _clean_room_name_line(line)
+    return None
+
+
+def extract_room_category(text: str) -> str | None:
+    for line in _meaningful_lines(text):
+        if _looks_like_area_line(line) or _looks_like_english(line):
+            continue
+        for keyword in sorted(ROOM_CATEGORY_KEYWORDS, key=len, reverse=True):
             if keyword in line:
                 return keyword
     return None
@@ -107,3 +129,9 @@ def _looks_like_english(line: str) -> bool:
 
 def _looks_like_door_mark(line: str) -> bool:
     return bool(re.fullmatch(r"[A-Z()]+D\d{3,4}", line) or re.fullmatch(r"[A-Z()]+PD\d{3,4}", line))
+
+
+def _clean_room_name_line(line: str) -> str:
+    cleaned = ROOM_NUMBER_RE.sub("", line)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" -_/")

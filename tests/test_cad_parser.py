@@ -27,6 +27,12 @@ def test_dxf_phase1_extraction(tmp_path: Path) -> None:
     assert raw.polylines[0].closed is True
     assert raw.polylines[0].bbox == (0.0, 0.0, 10.0, 10.0)
     assert raw.polylines[0].area == 100.0
+    line_entities = [polyline for polyline in raw.polylines if polyline.entity_type == "LINE"]
+    arc_entities = [polyline for polyline in raw.polylines if polyline.entity_type == "ARC"]
+    assert line_entities[0].points == [(0.0, -5.0), (10.0, -5.0)]
+    assert line_entities[0].closed is False
+    assert len(arc_entities) == 2
+    assert all(len(polyline.points) >= 3 for polyline in arc_entities)
     assert len(raw.axes) == 2
     assert raw.axes[0].layer == "A-AXIS"
     assert raw.axes[0].entity_type == "LINE"

@@ -14,12 +14,15 @@ def test_build_rooms_auto_creates_room_with_geometry_area_and_confidence() -> No
         polygon_cad=[(0, 0), (5000, 0), (5000, 5000), (0, 5000)],
         bbox_cad=(0, 0, 5000, 5000),
         area_cad=25_000_000,
+        metadata={"usable_area_cad": 24_000_000, "column_overlap_area": 1_000_000},
     )
     label = RoomLabelCandidate(
         candidate_id="sample_label_0001",
         floor="L2",
         room_number="201",
         room_name="会议室",
+        room_name_raw="会议室",
+        room_category="会议室",
         area=25.0,
         center=(2500, 2500),
         bbox=(2400, 2400, 2600, 2600),
@@ -34,6 +37,8 @@ def test_build_rooms_auto_creates_room_with_geometry_area_and_confidence() -> No
                 floor="L2",
                 room_number="201",
                 room_name="会议室",
+                room_name_raw="会议室",
+                room_category="会议室",
                 area_text=25.0,
                 label_center=(2500, 2500),
                 label_bbox=(2400, 2400, 2600, 2600),
@@ -50,9 +55,12 @@ def test_build_rooms_auto_creates_room_with_geometry_area_and_confidence() -> No
     assert result.summary["room_count"] == 1
     room = result.rooms[0]
     assert room.room_uid == "sample_r0001"
+    assert room.basic_info.room_name_raw == "会议室"
+    assert room.basic_info.room_category == "会议室"
     assert room.basic_info.room_type == "meeting"
-    assert room.area.calculated_value == 25.0
-    assert room.area.deviation_percent == 0.0
+    assert room.area.calculated_value == 24.0
+    assert room.area.deviation_percent == 4.0
+    assert room.evidence.cad_source["boundary_metadata"]["column_overlap_area"] == 1_000_000
     assert room.geometry.geometry_source == "cad_auto"
     assert room.geometry.bbox_cad == (0, 0, 5000, 5000)
     assert room.confidence.overall == 0.97

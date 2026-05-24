@@ -361,7 +361,7 @@ def build_json_review_html(sources: list[ReviewSource], title: str) -> str:
       <section style="grid-column: 1 / -1;">
         <h2>房间识别明细（每个数据源前 500 条）</h2>
         <table>
-          <thead><tr><th>数据源</th><th>#</th><th>房间ID</th><th>房号</th><th>房名</th><th>状态</th><th>匹配方式</th><th>置信度</th><th>边界/图层</th><th>问题</th></tr></thead>
+          <thead><tr><th>数据源</th><th>#</th><th>房间ID</th><th>房号</th><th>房名</th><th>类别</th><th>状态</th><th>匹配方式</th><th>置信度</th><th>边界/图层</th><th>问题</th></tr></thead>
           <tbody>{room_detail_rows}</tbody>
         </table>
       </section>
@@ -689,6 +689,7 @@ def _normalize_room(room: dict[str, Any]) -> dict[str, Any]:
             "room_id": str(room.get("room_candidate_id") or ""),
             "room_number": str(room.get("room_number") or ""),
             "room_name": str(room.get("room_name") or ""),
+            "room_category": str(room.get("room_category") or ""),
             "status": str(room.get("status") or ""),
             "match_method": str(room.get("match_method") or ""),
             "confidence": room.get("confidence"),
@@ -710,6 +711,7 @@ def _normalize_room(room: dict[str, Any]) -> dict[str, Any]:
         "room_id": str(room.get("room_uid") or ""),
         "room_number": str(basic_info.get("room_number") or ""),
         "room_name": str(basic_info.get("room_name") or ""),
+        "room_category": str(basic_info.get("room_category") or ""),
         "status": str(review.get("status") or room.get("final_status") or ""),
         "match_method": str(geometry.get("geometry_source") or ""),
         "confidence": (room.get("confidence") or {}).get("overall"),
@@ -980,6 +982,7 @@ def _room_row(source: ReviewSource, index: int, room: dict[str, Any]) -> str:
     return (
         f'<tr class="source-{source.index}"><td>{escape(source.name)}</td><td>{index}</td>'
         f"<td>{escape(room['room_id'])}</td><td>{escape(room['room_number'])}</td><td>{escape(room['room_name'])}</td>"
+        f"<td>{escape(room['room_category'])}</td>"
         f"<td>{escape(room['status'])}</td><td>{escape(room['match_method'])}</td>"
         f"<td>{_format_number(room.get('confidence'))}</td><td>{boundary_text}</td><td>{escape(issue_text)}</td></tr>"
     )

@@ -17,6 +17,8 @@ class RoomTextParse(BaseModel):
     height: float | None = None
     room_number: str | None = None
     room_name: str | None = None
+    room_name_raw: str | None = None
+    room_category: str | None = None
     area: float | None = None
     area_unit: str = "m2"
     matched_types: list[str] = Field(default_factory=list)
@@ -29,6 +31,8 @@ class RoomLabelCandidate(BaseModel):
     floor: str | None = None
     room_number: str | None = None
     room_name: str | None = None
+    room_name_raw: str | None = None
+    room_category: str | None = None
     area: float | None = None
     area_unit: str = "m2"
     center: Point

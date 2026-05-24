@@ -29,6 +29,8 @@ class RoomCandidate(BaseModel):
     floor: str | None = None
     room_number: str | None = None
     room_name: str | None = None
+    room_name_raw: str | None = None
+    room_category: str | None = None
     area_text: float | None = None
     area_unit: str = "m2"
     label_center: Point

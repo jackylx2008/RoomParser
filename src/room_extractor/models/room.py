@@ -15,6 +15,8 @@ class BasicInfo(BaseModel):
     floor: str | None = None
     room_number: str | None = None
     room_name: str | None = None
+    room_name_raw: str | None = None
+    room_category: str | None = None
     room_type: str | None = None
 
 
@@ -56,4 +58,3 @@ class Room(BaseModel):
     review: ReviewState = Field(default_factory=ReviewState)
     issues: list[Issue] = Field(default_factory=list)
     final_status: str = "draft"
-

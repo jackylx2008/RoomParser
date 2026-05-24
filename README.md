@@ -7,12 +7,12 @@
 - `room-extractor --version` 输出版本号。
 - `room-extractor convert-dwg` 使用本机 AutoCAD `AcCoreConsole.exe` 无界面批量转换 DWG 为 DXF。
 - `room-extractor analyze-layers --dxf <file>` 输出 DXF 图层清单和实体统计；支持 `--visible-only` 只统计未关闭、未冻结、未 invisible 的图元。
-- `room-extractor extract-cad --dxf <file> --out <file>` 输出 `cad_raw.json`，包含图层、文字、块属性、多段线和轴网线基础信息；支持 `--visible-only` 过滤关闭 / 冻结 / invisible 图元。
+- `room-extractor extract-cad --dxf <file> --out <file>` 输出 `cad_raw.json`，包含图层、文字、块属性、多段线、普通线段、圆弧采样点列和轴网线基础信息；支持 `--visible-only` 过滤关闭 / 冻结 / invisible 图元。
 - `room-extractor extract-cad --dxf <file> --out <file> --axis-only` 仅按轴线规则输出轴线和轴号图层信息，适合生成轴线专项校核 JSON。
 - `room-extractor extract-cad --dxf <file> --out <file> --columns-only` 按结构柱规则输出独立 `columns` JSON，可自动展开块 / 外参内部图元。
 - `room-extractor analyze-column-features --dxf <verified-columns.dxf> --out <file>` 从已确认正确的柱专项 DXF 统计图层、颜色、填充、长宽和面积等可复用特征。
-- `room-extractor build-room-labels --cad <cad_raw.json> --out <file>` 输出 `room_label_candidates.json`，包含房号、房名、面积和文本聚类结果。
-- `room-extractor build-room-candidates --cad <cad_raw.json> --labels <room_label_candidates.json> --out <file>` 输出 `room_candidates.json`，将房间 label 中心点匹配到闭合 polygon；支持 `--boundary-layer` 指定房间边界图层优先级，支持 `--axes` / `--columns` 注入轴线和柱子 JSON 上下文。
+- `room-extractor build-room-labels --cad <cad_raw.json> --out <file>` 输出 `room_label_candidates.json`，包含房号、原始房名、房间类别、面积和文本聚类结果。
+- `room-extractor build-room-candidates --cad <cad_raw.json> --labels <room_label_candidates.json> --out <file>` 输出 `room_candidates.json`，将房间 label 中心点匹配到闭合 polygon；支持 `--boundary-layer` 指定房间边界图层优先级，并可把炸碎后的 `LINE / ARC / open POLYLINE`、门洞补边和结构柱边线重建为闭合候选；支持 `--axes` / `--columns` 注入轴线和柱子 JSON 上下文。
 - `room-extractor export-review-map --cad <cad_raw.json> --rooms <room_candidates.json> --out <file>` 输出 HTML/SVG 阶段检查图，仅用于 Phase 3 规则诊断。
 - `room-extractor build-rooms --candidates <room_candidates.json> --out <file>` 输出 `rooms_auto.json`，生成 CAD 自动识别版初始 Room JSON。
 - `room-extractor check-pdf --rooms <rooms_auto.json> --pdf <file.pdf> --out <file>` 输出 `rooms_pdf_checked.json`，提取 PDF 矢量文字并对 CAD 房间结果做局部一致性校核。
@@ -117,7 +117,7 @@ python main.py extract-cad --dxf data/input/dxf/sample.dxf --out data/output/jso
 }
 ```
 
-`axes` 来自轴网图层中的 `LINE / LWPOLYLINE / POLYLINE / ARC`。弧形轴线会采样为点列；同一图层中首尾相接的弧段会合并为一根曲线轴线。每条至少包含：
+`polylines` 会保存 `LWPOLYLINE / POLYLINE / LINE / ARC` 的点列，其中 `LINE / ARC` 作为开放线性对象输出，供炸碎后的墙线重建房间边界使用。`axes` 来自轴网图层中的 `LINE / LWPOLYLINE / POLYLINE / ARC`。弧形轴线会采样为点列；同一图层中首尾相接的弧段会合并为一根曲线轴线。每条至少包含：
 
 ```json
 {
@@ -259,12 +259,12 @@ python main.py build-room-labels --cad data/output/json/cad_raw.json --out data/
 输出包括：
 
 - `parsed_texts`：每条 CAD 文本的标准化和字段识别结果。
-- `candidates`：相邻房号、房名、面积聚类后的房间 label 候选。
-- `candidate_id`、`floor`、`room_number`、`room_name`、`area`、`center`、`bbox`、`confidence`、`issues`。
+- `candidates`：相邻房号、原始房名、房间类别、面积聚类后的房间 label 候选。
+- `candidate_id`、`floor`、`room_number`、`room_name`、`room_name_raw`、`room_category`、`area`、`center`、`bbox`、`confidence`、`issues`。
 
 Phase 2 会对常见 CAD 中文乱码做 GBK mojibake 恢复，例如真实图纸中的会议室、贵宾室、卫生间等文本可恢复后再解析。
 
-当前词表已覆盖常规房间和部分房间型特殊空间，例如 `强电`、`弱电`、`风井`、`水井`、`楼梯`。这类标注会作为房间 label 进入后续边界匹配。
+当前词表已覆盖常规房间、机电空间和部分房间型特殊空间，例如 `空调机房`、`强电`、`弱电`、`风井`、`水井`、`楼梯`。这类标注会作为房间 label 进入后续边界匹配。房号识别已覆盖 `C.L2.M001-C04`、`C.L2.M020`、`C.2.M002` 等机电房编号格式。
 
 ## 房间边界识别
 
@@ -285,11 +285,12 @@ python main.py build-room-candidates `
   --boundary-layer '0-面积线' `
   --boundary-layer '面积平面 - 会议2F- 20.00m平面图$1$A-WALL' `
   --boundary-layer '05-L2-WALL$1$VT-WALL-总包' `
+  --boundary-layer 'Defpoints' `
   --axes data/output/json/cad_raw_axis_check.json `
   --columns data/output/json/cad_raw_columns_from_full_real.json
 ```
 
-注意：PowerShell 中包含 `$1` 的图层名必须使用单引号，否则 `$1` 会被变量展开，导致图层规则失真。
+注意：PowerShell 中包含 `$1` 的图层名必须使用单引号，否则 `$1` 会被变量展开，导致图层规则失真。`ROOM_WALL` 当前样本中右侧 `服务间 2-07（66㎡）` 的闭合边界位于 `Defpoints`，复跑时需要保留该图层。
 
 输出包括：
 
@@ -297,10 +298,13 @@ python main.py build-room-candidates `
 - `room_candidates`：每个 room label 与 polygon 的匹配结果。
 - `summary`：状态、匹配方式和 issue 统计摘要。
 - 严格匹配：优先房间边界/面积线图层，使用 label 中心点落入 polygon 的最小合适边界。
+- 炸碎墙线：当指定 `--boundary-layer` 时，会在这些图层上把开放 `LINE / ARC / open POLYLINE` 线段 polygonize 为 `SEGMENT_POLYGONIZED` 闭合候选，用于人工处理后暴露墙体线段的 DXF。
+- 门洞补边：对近似共线且距离在门宽范围内的墙端点补虚拟闭合边，补边数量写入 `door_gap_bridge_count` metadata，后续 HTML/人工校核可据此判断风险。
 - fallback 匹配：普通房间中心点未落入 polygon 时，可按优先边界图层 bbox 距离生成 `matched_fallback`，并写入 `LABEL_OUTSIDE_BOUNDARY_FALLBACK_MATCH`。
+- 文字面积反查：当房间文字包含面积时，若附近边界的 CAD 面积与文字面积偏差小于阈值，会优先采用该边界并写入 `LABEL_OUTSIDE_BOUNDARY_AREA_MATCH`。该规则用于处理 MTEXT 插入点/对齐点落在相邻房间内、但视觉文字属于旁边房间的情况。
 - 特殊空间：客梯、货梯、电梯厅、走道、通道等无面积空间不强行 fallback，标记 `SPECIAL_SPACE_NO_AREA_BOUNDARY` 等待人工确认。
 - 房间型特殊空间：强电、弱电、风井、水井、楼梯等标注本身按房间处理，即使缺少面积文字，也允许按面积线或墙体闭合 polygon 低置信度匹配。
-- 柱子辅助：当传入 `--columns` 时，边界候选会增加 `column_overlap_count`、`column_overlap_area`、`column_nearby_count` 等元数据，用于人工检查和后续规则优化；柱子 JSON 仍保持独立，不直接并入房间成果。
+- 柱子辅助：当传入 `--columns` 时，结构柱边线会作为可闭合边界段参与 polygonize；边界候选会增加 `column_overlap_count`、`column_overlap_area`、`column_nearby_count`、`usable_area_cad` 等元数据，用于人工检查和后续规则优化。`rooms_auto.json` 的 CAD 计算面积优先使用扣除柱重叠后的 `usable_area_cad`；柱子 JSON 仍保持独立，不直接并入房间成果。
 
 导出阶段检查图：
 
@@ -423,7 +427,7 @@ CUDA 注意事项：
 ```text
 src/room_extractor/
   ai/         本地 OpenAI 兼容多模态模型客户端和截图校核流程
-  cad/        DXF 加载、DWG 转换、图层分析、文本/块/多段线/轴网线/结构柱提取
+  cad/        DXF 加载、DWG 转换、图层分析、文本/块/线性对象/轴网线/结构柱提取
   cli/        命令行入口
   config/     图层规则配置、轴线和结构柱专项规则
   export/     阶段检查图等导出能力
@@ -445,15 +449,17 @@ python -m pytest
 
 当前通过用例覆盖：
 
-- DXF 加载、图层统计、TEXT/MTEXT/INSERT/LWPOLYLINE/AXIS 提取
+- DXF 加载、图层统计、TEXT/MTEXT/INSERT/LWPOLYLINE/LINE/ARC/AXIS 提取
+- 炸碎墙线 polygonize 为房间边界候选
 - 轴线专项提取、轴线图层 YAML 规则、轴线 JSON 人工校核入口
 - 结构柱专项提取、结构柱特征分析、柱规则 YAML、块 / 外参内部图元展开
 - DWG 文件扫描与转换路径组织
 - `convert-dwg` CLI 汇总输出
-- 房号、房名、面积正则识别
+- 房号、原始房名、房间类别、面积正则识别
 - CAD 中文 mojibake 文本恢复
 - 相邻房号、房名、面积聚类为 room label candidate
 - 闭合 CAD polygon 过滤、bbox/面积输出、label 到 polygon 匹配
+- 门洞补边、结构柱边线参与 polygonize、柱重叠面积扣减
 - 初始 Room JSON 生成、CAD 面积换算、面积偏差和初始 confidence
 - PDF 矢量文字提取、bbox 局部查找、CAD/PDF 字段一致性校核
 - `check-pdf` CLI 输出

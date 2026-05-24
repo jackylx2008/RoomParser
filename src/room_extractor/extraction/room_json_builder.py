@@ -68,7 +68,9 @@ def _build_room(index: int, candidate: RoomCandidate, source_file: str) -> Room:
             floor=candidate.floor,
             room_number=candidate.room_number,
             room_name=candidate.room_name,
-            room_type=_room_type(candidate.room_name),
+            room_name_raw=candidate.room_name_raw,
+            room_category=candidate.room_category,
+            room_type=_room_type(candidate.room_category or candidate.room_name),
         ),
         area=AreaInfo(
             text_value=candidate.area_text,
@@ -110,6 +112,7 @@ def _cad_source(source_file: str, candidate: RoomCandidate) -> dict[str, object]
         "match_method": candidate.match_method,
         "boundary_id": candidate.boundary.boundary_id if candidate.boundary else None,
         "boundary_layer": candidate.boundary.layer if candidate.boundary else None,
+        "boundary_metadata": candidate.boundary.metadata if candidate.boundary else {},
         "source_text_indices": [text.source_index for text in candidate.label.source_texts],
         "source_texts": [text.normalized_text for text in candidate.label.source_texts],
     }
@@ -118,7 +121,9 @@ def _cad_source(source_file: str, candidate: RoomCandidate) -> dict[str, object]
 def _calculated_area_m2(candidate: RoomCandidate) -> float | None:
     if candidate.boundary is None:
         return None
-    return round(candidate.boundary.area_cad / CAD_AREA_TO_M2, 3)
+    usable_area = candidate.boundary.metadata.get("usable_area_cad")
+    area_cad = usable_area if isinstance(usable_area, (int, float)) else candidate.boundary.area_cad
+    return round(float(area_cad) / CAD_AREA_TO_M2, 3)
 
 
 def _area_deviation(text_area: float | None, calculated_area: float | None) -> float | None:

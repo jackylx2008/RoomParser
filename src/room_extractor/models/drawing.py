@@ -54,7 +54,7 @@ class CadBlockEntity(BaseModel):
 
 
 class CadPolylineEntity(BaseModel):
-    """Raw LWPOLYLINE/POLYLINE entity extracted from DXF."""
+    """Raw linear entity extracted from DXF."""
 
     layer: str
     entity_type: str

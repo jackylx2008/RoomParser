@@ -19,6 +19,9 @@ from room_extractor.extraction.room_boundary_detector import (
 
 
 FALLBACK_MAX_DISTANCE = 8_000.0
+AREA_MATCH_MAX_DISTANCE = 3_000.0
+AREA_MATCH_MAX_DEVIATION_PERCENT = 10.0
+CAD_AREA_TO_M2 = 1_000_000.0
 FALLBACK_SUPPRESSED_SPECIAL_SPACE_NAMES = ("客梯", "货梯", "电梯厅", "走道", "通道")
 ROOM_LIKE_SPECIAL_SPACE_NAMES = ("强电", "弱电", "风井", "水井", "楼梯")
 
@@ -28,6 +31,7 @@ class BoundaryMatch:
     boundary: RoomBoundaryCandidate
     method: str
     fallback_distance: float = 0.0
+    area_deviation_percent: float | None = None
 
 
 def build_room_candidates(
@@ -46,6 +50,7 @@ def build_room_candidates(
         min_area=min_boundary_area,
         max_area=max_boundary_area,
         boundary_layers=boundary_layers,
+        columns=columns_raw.columns if columns_raw is not None else None,
     )
     if columns_raw is not None:
         boundaries = _annotate_boundaries_with_columns(boundaries, columns_raw.columns)
@@ -96,6 +101,23 @@ def _build_room_candidate(
                     need_manual_review=True,
                 )
             )
+        elif match.method == "text_area_nearby_boundary_match":
+            status = "matched_fallback"
+            confidence = _area_match_confidence(label.confidence, match.fallback_distance, match.area_deviation_percent)
+            issues.append(
+                Issue(
+                    issue_code="LABEL_OUTSIDE_BOUNDARY_AREA_MATCH",
+                    severity="low",
+                    field="geometry",
+                    cad_value={
+                        "fallback_distance": round(match.fallback_distance, 3),
+                        "boundary_id": boundary.boundary_id,
+                        "area_deviation_percent": round(match.area_deviation_percent or 0.0, 3),
+                    },
+                    message="房间文字中心点未落入 polygon，但文字面积与附近边界面积吻合，已按面积优先匹配",
+                    need_manual_review=True,
+                )
+            )
     else:
         status = "auto_failed"
         match_method = "unmatched_classified"
@@ -106,6 +128,8 @@ def _build_room_candidate(
         floor=floor or label.floor,
         room_number=label.room_number,
         room_name=label.room_name,
+        room_name_raw=label.room_name_raw,
+        room_category=label.room_category,
         area_text=label.area,
         area_unit=label.area_unit,
         label_center=label.center,
@@ -125,6 +149,15 @@ def _find_boundary_match(
     boundary_layers: list[str] | None = None,
 ) -> BoundaryMatch | None:
     containing = _containing_boundaries(label.center, boundaries)
+    area_match = _best_text_area_match(label, boundaries, boundary_layers=boundary_layers)
+    if area_match is not None:
+        if not containing:
+            return area_match
+        containing_deviation = _best_containing_area_deviation(label, containing)
+        if containing_deviation is None or area_match.area_deviation_percent is None:
+            pass
+        elif area_match.area_deviation_percent + 1.0 < containing_deviation:
+            return area_match
     if containing:
         boundary = min(containing, key=lambda boundary: (boundary_layer_priority(boundary, boundary_layers=boundary_layers), boundary.area_cad))
         return BoundaryMatch(boundary=boundary, method="point_in_polygon_smallest_area")
@@ -141,6 +174,68 @@ def _find_boundary_match(
         method="nearest_preferred_boundary_bbox_fallback",
         fallback_distance=distance,
     )
+
+
+def _best_text_area_match(
+    label,
+    boundaries: list[RoomBoundaryCandidate],
+    boundary_layers: list[str] | None = None,
+) -> BoundaryMatch | None:
+    if label.area is None:
+        return None
+    scored: list[tuple[float, float, int, float, RoomBoundaryCandidate]] = []
+    for boundary in boundaries:
+        area_m2 = _boundary_area_m2(boundary)
+        if area_m2 is None:
+            continue
+        deviation = _area_deviation_percent(label.area, area_m2)
+        if deviation > AREA_MATCH_MAX_DEVIATION_PERCENT:
+            continue
+        distance = point_to_bbox_distance(label.center, boundary.bbox_cad)
+        if distance > AREA_MATCH_MAX_DISTANCE and not is_point_in_polygon(label.center, boundary.polygon_cad):
+            continue
+        scored.append(
+            (
+                deviation,
+                distance,
+                boundary_layer_priority(boundary, boundary_layers=boundary_layers),
+                boundary.area_cad,
+                boundary,
+            )
+        )
+    if not scored:
+        return None
+    deviation, distance, _, _, boundary = min(scored, key=lambda item: item[:4])
+    method = "point_in_polygon_smallest_area" if is_point_in_polygon(label.center, boundary.polygon_cad) else "text_area_nearby_boundary_match"
+    return BoundaryMatch(
+        boundary=boundary,
+        method=method,
+        fallback_distance=distance,
+        area_deviation_percent=deviation,
+    )
+
+
+def _best_containing_area_deviation(label, boundaries: list[RoomBoundaryCandidate]) -> float | None:
+    if label.area is None:
+        return None
+    deviations = []
+    for boundary in boundaries:
+        area_m2 = _boundary_area_m2(boundary)
+        if area_m2 is not None:
+            deviations.append(_area_deviation_percent(label.area, area_m2))
+    return min(deviations) if deviations else None
+
+
+def _boundary_area_m2(boundary: RoomBoundaryCandidate) -> float | None:
+    usable_area = boundary.metadata.get("usable_area_cad")
+    area_cad = usable_area if isinstance(usable_area, (int, float)) else boundary.area_cad
+    if area_cad is None:
+        return None
+    return float(area_cad) / CAD_AREA_TO_M2
+
+
+def _area_deviation_percent(text_area: float, calculated_area: float) -> float:
+    return abs(calculated_area - text_area) / max(text_area, 1.0) * 100.0
 
 
 def _containing_boundaries(point: tuple[float, float], boundaries: list[RoomBoundaryCandidate]) -> list[RoomBoundaryCandidate]:
@@ -173,6 +268,12 @@ def _matched_confidence(label_confidence: float, boundary: RoomBoundaryCandidate
 def _fallback_confidence(label_confidence: float, distance: float) -> float:
     distance_penalty = min(0.25, distance / FALLBACK_MAX_DISTANCE * 0.25)
     return round(max(0.35, min(0.85, label_confidence * 0.65 + 0.2 - distance_penalty)), 2)
+
+
+def _area_match_confidence(label_confidence: float, distance: float, deviation: float | None) -> float:
+    distance_penalty = min(0.15, distance / AREA_MATCH_MAX_DISTANCE * 0.15)
+    deviation_penalty = min(0.1, (deviation or 0.0) / AREA_MATCH_MAX_DEVIATION_PERCENT * 0.1)
+    return round(max(0.45, min(0.9, label_confidence * 0.7 + 0.2 - distance_penalty - deviation_penalty)), 2)
 
 
 def _unmatched_issue(label, boundaries: list[RoomBoundaryCandidate]) -> Issue:
@@ -226,12 +327,12 @@ def _should_suppress_fallback(label) -> bool:
 
 
 def _is_fallback_suppressed_special_space(label) -> bool:
-    room_name = label.room_name or ""
+    room_name = f"{label.room_name or ''} {label.room_category or ''}"
     return any(name in room_name for name in FALLBACK_SUPPRESSED_SPECIAL_SPACE_NAMES)
 
 
 def _is_room_like_special_space(label) -> bool:
-    room_name = label.room_name or ""
+    room_name = f"{label.room_name or ''} {label.room_category or ''}"
     return any(name in room_name for name in ROOM_LIKE_SPECIAL_SPACE_NAMES)
 
 
@@ -311,6 +412,8 @@ def _annotate_boundaries_with_columns(
             "column_overlap_area": round(overlap_area, 3),
             "column_nearby_count": nearby_count,
         }
+        if boundary.area_cad is not None:
+            metadata["usable_area_cad"] = round(max(0.0, boundary.area_cad - overlap_area), 3)
         annotated.append(boundary.model_copy(update={"metadata": metadata}))
     return annotated
 

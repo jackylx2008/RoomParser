@@ -516,7 +516,7 @@ python -m pytest
 当前结果：
 
 ```text
-50 passed
+53 passed
 ```
 
 ## 最新接续实验：ROOM_WALL 可见实体房间识别
@@ -538,6 +538,12 @@ python -m pytest
 - `extract-cad` / `analyze-layers` 新增 `--visible-only`，用于过滤冻结、关闭或 invisible 图元。
 - `build-room-candidates` 新增 `--boundary-layer`，可按顺序指定边界候选图层与优先级。
 - `build-room-candidates` 新增 `--axes` / `--columns`，将轴线与柱子 JSON 写入 summary，并为边界候选增加柱重叠元数据。
+- `extract-cad` 将 `LINE / ARC` 作为开放线性对象写入 `polylines`，圆弧按点列采样。
+- `build-room-candidates` 在指定 `--boundary-layer` 时，会把炸碎后的 `LINE / ARC / open POLYLINE` polygonize 为 `SEGMENT_POLYGONIZED` 闭合候选。
+- 房号识别新增 `C.L2.M001-C04`、`C.L2.M020`、`C.2.M002` 等机电房编号格式。
+- 房名识别保留原始中文房名，并新增 `room_category`，例如 `会议空调机房` 的类别为 `空调机房`。
+- 门洞补边：对近似共线、距离在门宽范围内的开放墙线端点补虚拟闭合边，补边数量记录到 `door_gap_bridge_count`。
+- 结构柱辅助增强：结构柱边线参与墙线 polygonize；房间候选记录 `usable_area_cad`，`rooms_auto` 的 CAD 计算面积优先使用扣除柱重叠后的面积。
 - 房名识别词表新增 `强电`、`弱电`、`风井`、`水井`。
 - 将 `强电`、`弱电`、`风井`、`水井`、`楼梯` 作为“房间型特殊空间”处理：即使无面积文字，也允许按面积线或墙体闭合 polygon 低置信度匹配。
 
@@ -552,23 +558,30 @@ python -m pytest
 
 关键摘要：
 
-- 可见实体抽取：文本 `1310`，多段线 `9354`，柱候选 `885`。
-- 边界候选数：`404`
+- 可见实体抽取：文本 `1310`，线性对象 `117925`，柱候选 `885`。
+  - `LINE`：`51722`
+  - `ARC`：`45603`
+  - `LWPOLYLINE`：`20600`
+- 边界候选数：`1090`
+  - 原始闭合 `LWPOLYLINE`：`126`
+  - 线段重建 `SEGMENT_POLYGONIZED`：`964`
   - `0-面积线`：`124`
-  - `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`：`2`
-  - `05-L2-WALL$1$VT-WALL-总包`：`278`
-- room label 候选数：`338`
+  - `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`：`469`
+  - `05-L2-WALL$1$VT-WALL-总包`：`497`
+- room label 候选数：`355`
 - room candidate 状态：
-  - `matched`：`58`
-  - `matched_fallback`：`212`
-  - `auto_failed`：`68`
+  - `matched`：`209`
+  - `matched_fallback`：`117`
+  - `auto_failed`：`29`
+  - 同时具备房名、房号、面积且完成严格/fallback 匹配：`90`
 - `rooms_auto_room_wall_visible.json`：
-  - room 数：`338`
-  - 带 CAD geometry：`270`
-  - 缺失 CAD geometry：`68`
+  - room 数：`355`
+  - 带 CAD geometry：`326`
+  - 缺失 CAD geometry：`29`
 - 柱辅助摘要：
   - 输入柱子数：`750`
-  - 与柱 polygon 存在重叠的边界候选：`189`
+  - 与柱 polygon 存在重叠的边界候选：`513`
+- 典型样本：`C.L2.M001-C04` 已识别为房号，`会议空调机房` 已识别为原始房名，类别为 `空调机房`。
 - `validate_json_html.py` 已扩展支持房间识别结果 JSON：
   - 可绘制 `room_candidates[].boundary` 或 `rooms[].geometry.polygon_cad`
   - 可绘制 `boundary_candidates`
@@ -579,7 +592,7 @@ python -m pytest
 
 文档同步：
 
-- README 已更新 `--visible-only`、`--boundary-layer`、`--axes`、`--columns`、房间型特殊空间、柱辅助元数据和房间识别 JSON 人工校核 HTML 的使用说明。
+- README 已更新 `--visible-only`、`--boundary-layer`、炸碎线段 polygonize、门洞补边、结构柱边线闭合、柱面积扣减、`--axes`、`--columns`、房间型特殊空间、柱辅助元数据和房间识别 JSON 人工校核 HTML 的使用说明。
 - `validate_json_html.py` 的房间识别校核能力已在 README 和本进度文档同步记录。
 
 ## 当前分支：HTML 总图缩放交互
@@ -601,7 +614,7 @@ python -m pytest
 
 验证：
 
-- `python -m pytest`：`51 passed`
+- `python -m pytest`：`53 passed`
 - 使用 Python Playwright 打开 `json_review_room_recognition_room_wall_zoom.html`，模拟鼠标滚轮后确认 SVG `viewBox` 宽高缩小，缩放读数从 `100%` 变为 `386%`。
 - 使用 Python Playwright 验证缩放到 `386%` 后，房间线宽和房间文字字号按约 `1 / 3.86` 反向缩小，视觉大小保持稳定；重置按钮可恢复初始 viewBox。
 - 人工打开 `json_review_room_recognition_room_wall_zoom.html` 校验后，确认滚轮缩放、拖拽平移以及线宽 / 文字恒定视觉大小效果满足当前校核需求。
