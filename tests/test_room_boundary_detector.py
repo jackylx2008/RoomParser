@@ -64,6 +64,35 @@ def test_boundary_detector_can_filter_to_configured_layers() -> None:
     assert boundaries[0].layer == "0-面积线"
 
 
+def test_boundary_detector_wall_keyword_matches_any_wall_layer() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(
+                layer="05-L2-WALL$1$VT-WALL-总包",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (2000, 0), (2000, 2000), (0, 2000)],
+                bbox=(0, 0, 2000, 2000),
+                area=4_000_000,
+            ),
+            CadPolylineEntity(
+                layer="A-FURN",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (3000, 0), (3000, 3000), (0, 3000)],
+                bbox=(0, 0, 3000, 3000),
+                area=9_000_000,
+            ),
+        ],
+    )
+
+    boundaries = build_room_boundary_candidates(cad_raw, boundary_layers=["WALL"])
+
+    assert len(boundaries) == 1
+    assert boundaries[0].layer == "05-L2-WALL$1$VT-WALL-总包"
+
+
 def test_boundary_detector_polygonizes_exploded_wall_lines_on_configured_layers() -> None:
     cad_raw = CadRawExtraction(
         source_file="sample.dxf",

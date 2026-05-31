@@ -189,28 +189,96 @@ def test_cli_convert_dwg_prints_summary(tmp_path: Path, capsys, monkeypatch) -> 
     input_dir = tmp_path / "cad"
     output_dir = tmp_path / "dxf"
     input_dir.mkdir()
+    seen: dict[str, object] = {}
 
     class FakeAcCoreConsoleDwgConverter:
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
 
     def fake_convert_dwg_directory(**kwargs):
+        seen["convert_kwargs"] = kwargs
         return [
             DwgConversionResult(
                 source_file=Path(kwargs["input_dir"]) / "A.dwg",
                 output_file=Path(kwargs["output_dir"]) / "A.dxf",
                 status="converted",
                 message=None,
+                explode_passes=3,
+                remaining_insert_count=0,
             )
         ]
 
     monkeypatch.setattr("room_extractor.cli.main.AcCoreConsoleDwgConverter", FakeAcCoreConsoleDwgConverter)
     monkeypatch.setattr("room_extractor.cli.main.convert_dwg_directory", fake_convert_dwg_directory)
 
-    assert main(["convert-dwg", "--input-dir", str(input_dir), "--output-dir", str(output_dir)]) == 0
+    assert (
+        main(
+            [
+                "convert-dwg",
+                "--input-dir",
+                str(input_dir),
+                "--output-dir",
+                str(output_dir),
+                "--explode-blocks",
+                "--max-explode-passes",
+                "3",
+            ]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["total"] == 1
     assert payload["converted"] == 1
+    assert payload["results"][0]["remaining_insert_count"] == 0
+    assert seen["convert_kwargs"]["explode_blocks"] is True
+    assert seen["convert_kwargs"]["max_explode_passes"] == 3
+
+
+def test_cli_explode_dxf_prints_summary(tmp_path: Path, capsys, monkeypatch) -> None:
+    input_dir = tmp_path / "dxf"
+    output_dir = tmp_path / "dxf_exploded"
+    input_dir.mkdir()
+    seen: dict[str, object] = {}
+
+    class FakeAcCoreConsoleDwgConverter:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    def fake_explode_dxf_directory(**kwargs):
+        seen["explode_kwargs"] = kwargs
+        return [
+            DwgConversionResult(
+                source_file=Path(kwargs["input_dir"]) / "A.dxf",
+                output_file=Path(kwargs["output_dir"]) / "A.dxf",
+                status="converted",
+                message=None,
+                explode_passes=2,
+                remaining_insert_count=0,
+            )
+        ]
+
+    monkeypatch.setattr("room_extractor.cli.main.AcCoreConsoleDwgConverter", FakeAcCoreConsoleDwgConverter)
+    monkeypatch.setattr("room_extractor.cli.main.explode_dxf_directory", fake_explode_dxf_directory)
+
+    assert (
+        main(
+            [
+                "explode-dxf",
+                "--input-dir",
+                str(input_dir),
+                "--output-dir",
+                str(output_dir),
+                "--max-explode-passes",
+                "2",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["total"] == 1
+    assert payload["converted"] == 1
+    assert payload["remaining_insert_total"] == 0
+    assert seen["explode_kwargs"]["max_explode_passes"] == 2
 
 
 def test_cli_build_room_labels_writes_json(tmp_path: Path) -> None:

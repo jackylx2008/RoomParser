@@ -527,8 +527,8 @@ python -m pytest
 - 规则要求：仅使用未隐藏、未冻结、未设置 invisible 的 modelspace 图元。
 - 已知房间边界参考图层：
   - `0-面积线`
-  - `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`
-  - `05-L2-WALL$1$VT-WALL-总包`
+  - 图层名包含 `WALL` 的可见墙体层，例如 `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`、`05-L2-WALL$1$VT-WALL-总包`
+  - `Defpoints`（当前样本右侧 `服务间 2-07（66㎡）` 的闭合边界来源）
 - 辅助上下文：
   - 轴线 JSON：`data/output/json/cad_raw_axis_check.json`
   - 柱子 JSON：`data/output/json/cad_raw_columns_from_full_real.json`
@@ -537,11 +537,13 @@ python -m pytest
 
 - `extract-cad` / `analyze-layers` 新增 `--visible-only`，用于过滤冻结、关闭或 invisible 图元。
 - `build-room-candidates` 新增 `--boundary-layer`，可按顺序指定边界候选图层与优先级。
+- `--boundary-layer WALL` 支持按关键字纳入所有图层名包含 `WALL` 的墙体层；也支持 `contains:WALL` 和通配符规则。
 - `build-room-candidates` 新增 `--axes` / `--columns`，将轴线与柱子 JSON 写入 summary，并为边界候选增加柱重叠元数据。
 - `extract-cad` 将 `LINE / ARC` 作为开放线性对象写入 `polylines`，圆弧按点列采样。
 - `build-room-candidates` 在指定 `--boundary-layer` 时，会把炸碎后的 `LINE / ARC / open POLYLINE` polygonize 为 `SEGMENT_POLYGONIZED` 闭合候选。
 - 房号识别新增 `C.L2.M001-C04`、`C.L2.M020`、`C.2.M002` 等机电房编号格式。
 - 房名识别保留原始中文房名，并新增 `room_category`，例如 `会议空调机房` 的类别为 `空调机房`。
+- 当房间文本包含面积时，若附近边界 CAD 面积与文字面积吻合，允许以 `LABEL_OUTSIDE_BOUNDARY_AREA_MATCH` 方式覆盖错误的中心点落入匹配；用于 MTEXT 插入点落在相邻房间但视觉文字属于旁边房间的情况。
 - 门洞补边：对近似共线、距离在门宽范围内的开放墙线端点补虚拟闭合边，补边数量记录到 `door_gap_bridge_count`。
 - 结构柱辅助增强：结构柱边线参与墙线 polygonize；房间候选记录 `usable_area_cad`，`rooms_auto` 的 CAD 计算面积优先使用扣除柱重叠后的面积。
 - 房名识别词表新增 `强电`、`弱电`、`风井`、`水井`。
@@ -562,26 +564,25 @@ python -m pytest
   - `LINE`：`51722`
   - `ARC`：`45603`
   - `LWPOLYLINE`：`20600`
-- 边界候选数：`1090`
-  - 原始闭合 `LWPOLYLINE`：`126`
-  - 线段重建 `SEGMENT_POLYGONIZED`：`964`
+- 边界候选数：`2079`
   - `0-面积线`：`124`
-  - `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`：`469`
-  - `05-L2-WALL$1$VT-WALL-总包`：`497`
-- room label 候选数：`355`
+  - 图层名包含 `WALL` 的墙体候选：`1928`
+  - `Defpoints`：`27`
+- room label 候选数：`415`
 - room candidate 状态：
-  - `matched`：`209`
-  - `matched_fallback`：`117`
-  - `auto_failed`：`29`
-  - 同时具备房名、房号、面积且完成严格/fallback 匹配：`90`
+  - `matched`：`271`
+  - `matched_fallback`：`103`
+  - `auto_failed`：`41`
+  - 同时具备房名、房号、面积且完成严格/fallback 匹配：`108`
 - `rooms_auto_room_wall_visible.json`：
-  - room 数：`355`
-  - 带 CAD geometry：`326`
-  - 缺失 CAD geometry：`29`
+  - room 数：`415`
+  - 带 CAD geometry：`374`
+  - 缺失 CAD geometry：`41`
 - 柱辅助摘要：
   - 输入柱子数：`750`
-  - 与柱 polygon 存在重叠的边界候选：`513`
+  - 与柱 polygon 存在重叠的边界候选：`1085`
 - 典型样本：`C.L2.M001-C04` 已识别为房号，`会议空调机房` 已识别为原始房名，类别为 `空调机房`。
+- 典型样本：`服务间 2-07（66㎡）` 通过文字面积反查匹配到 `Defpoints` 上的 `65.836㎡` 闭合边界，避免被会议空调机房的大边界吞并。
 - `validate_json_html.py` 已扩展支持房间识别结果 JSON：
   - 可绘制 `room_candidates[].boundary` 或 `rooms[].geometry.polygon_cad`
   - 可绘制 `boundary_candidates`
@@ -618,6 +619,32 @@ python -m pytest
 - 使用 Python Playwright 打开 `json_review_room_recognition_room_wall_zoom.html`，模拟鼠标滚轮后确认 SVG `viewBox` 宽高缩小，缩放读数从 `100%` 变为 `386%`。
 - 使用 Python Playwright 验证缩放到 `386%` 后，房间线宽和房间文字字号按约 `1 / 3.86` 反向缩小，视觉大小保持稳定；重置按钮可恢复初始 viewBox。
 - 人工打开 `json_review_room_recognition_room_wall_zoom.html` 校验后，确认滚轮缩放、拖拽平移以及线宽 / 文字恒定视觉大小效果满足当前校核需求。
+
+## 当前接续：CAD 图块自动炸碎
+
+本轮目标：把 AutoCAD 中仍保留为 `INSERT` 的图块在 CLI 阶段自动炸碎，减少房间墙线仍藏在块内部导致的边界缺失。
+
+已完成：
+
+- `convert-dwg` 新增 `--explode-blocks` 和 `--max-explode-passes`。
+- 新增 `explode-dxf` 命令，可对已有 DXF 目录输出炸块后的 DXF。
+- `explode-dxf --input-dir` 支持目录或单个 `.dxf` 文件；单文件输入会输出到 `--output-dir` 下的同名 DXF。
+- 转换/炸块流程每轮 explode 前先解锁所有图层，然后选择 modelspace `INSERT` 执行 `EXPLODE`；之后用 `ezdxf` 统计生成 DXF 的 modelspace `INSERT` 数量。只要 `remaining_insert_count > 0` 就自动继续下一轮，直到清零或达到 `--max-explode-passes` 安全上限。
+- CoreConsole 执行阶段新增心跳日志；`--progress-interval-seconds` 可控制日志间隔，长时间炸块时会持续输出当前 pass、已耗时、超时时间，并附带 AcCoreConsole stdout/stderr 尾部反馈。
+- LISP explode 循环中每 100 个块输出一次 `ROOM_EXTRACTOR_EXPLODE_PROGRESS 当前数/总数`，例如 `ROOM_EXTRACTOR_EXPLODE_PROGRESS 1200/5769`，用于确认单轮 explode 内部仍在推进。
+- AcCoreConsole 的中间 DXF、SCR、stdout/stderr 日志，以及子进程 `TEMP` / `TMP` / `TMPDIR` 默认写入 `D:/TEMP/room_extractor_acad_*`，避免系统盘空间不足导致 AutoCAD 无法写入 abort 文件。
+- CLI 输出结果中新增 `explode_passes` 和 `remaining_insert_count`，用于判断是否仍需人工处理。
+- README 已补充 DWG 转 DXF 时炸块、已有 DXF 炸块和剩余图块校核命令。
+- 真实样本已验证：从日志看经过多轮 explode 后，生成 DXF 的 modelspace `remaining_insert_count` 已清零；人工使用 AutoCAD 打开处理后的 DXF，可正常查看、编辑和保存。
+
+示例命令：
+
+```powershell
+python main.py convert-dwg --input-dir data/input/cad --output-dir data/input/dxf_exploded --overwrite --explode-blocks --max-explode-passes 5
+python main.py explode-dxf --input-dir data/input/dxf --output-dir data/input/dxf_exploded --overwrite --timeout-seconds 1200 --progress-interval-seconds 10 --max-explode-passes 5
+```
+
+注意：AutoCAD `EXPLODE` 可能把块拆成 `LINE / ARC / LWPOLYLINE / TEXT` 等多类实体，不保证全部变成 `LINE`；动态块、代理对象、外参或受保护对象可能仍保留 `INSERT`，此时 `remaining_insert_count` 会大于 0。
 
 ## 已知边界
 

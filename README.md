@@ -42,6 +42,34 @@ python -m pip install -e .[dev]
 python main.py convert-dwg --input-dir data/input/cad --output-dir data/input/dxf --overwrite --timeout-seconds 300
 ```
 
+如果需要在 DWG 转 DXF 时自动炸碎图块，并在输出后校核是否仍有 `INSERT`，可加 `--explode-blocks`。程序会在每轮 explode 前先解锁所有图层，再选择 modelspace 中的 `INSERT` 执行 `EXPLODE`，然后用 `ezdxf` 统计 modelspace 图块数量；只要 `remaining_insert_count > 0` 就会自动继续下一轮，直到清零或达到 `--max-explode-passes` 安全上限：
+
+```powershell
+python main.py convert-dwg --input-dir data/input/cad --output-dir data/input/dxf_exploded --overwrite --timeout-seconds 300 --explode-blocks --max-explode-passes 5
+```
+
+对已有 DXF 也可以单独输出炸块版本：
+
+```powershell
+python main.py explode-dxf --input-dir data/input/dxf --output-dir data/input/dxf_exploded --overwrite --timeout-seconds 300 --max-explode-passes 5
+```
+
+也可以直接传单个 DXF 文件：
+
+```powershell
+python main.py explode-dxf --input-dir 'data/input/dxf/L2_20.00m平面图.dxf' --output-dir data/input/dxf_exploded --overwrite --timeout-seconds 1200 --progress-interval-seconds 10 --max-explode-passes 5
+```
+
+长时间炸块时可缩短进度日志间隔，便于确认 CoreConsole 没有卡死：
+
+```powershell
+python main.py explode-dxf --input-dir data/input/dxf --output-dir data/input/dxf_exploded --overwrite --timeout-seconds 1200 --progress-interval-seconds 10 --max-explode-passes 5
+```
+
+心跳日志会附带 AcCoreConsole 的 stdout/stderr 尾部内容，便于判断当前是否停在选择对象、解锁图层、DXFOUT 或 AutoCAD 报错提示上。LISP explode 循环中还会每 100 个块输出一次 `ROOM_EXTRACTOR_EXPLODE_PROGRESS 1200/5769` 形式的进度，方便判断当前 pass 是否仍在推进。
+
+AcCoreConsole 的中间 DXF、SCR、stdout/stderr 日志，以及子进程环境变量 `TEMP` / `TMP` / `TMPDIR` 默认都写入 `D:/TEMP/room_extractor_acad_*`。这样可以避开 Windows 系统盘空间不足导致的 AutoCAD 致命错误，例如“无法写入放弃文件”。运行完成且未指定 `--keep-scripts` 时，程序会清理本次运行创建的临时子目录。
+
 如果需要显式指定 AutoCAD 2024 控制台程序：
 
 ```powershell
@@ -53,6 +81,8 @@ python main.py convert-dwg --input-dir data/input/cad --output-dir data/input/dx
 - 使用 `AcCoreConsole.exe /i input.dwg /s script.scr /l en-US`。
 - 每个 DWG 会先复制到临时 ASCII 工作目录，避免 AutoCAD `.scr` 对中文路径解析失败。
 - 转换完成后再把生成的 DXF 移动到目标目录。
+- 炸块输出的 CLI JSON 摘要会记录 `explode_passes` 和 `remaining_insert_count`；如果剩余数量大于 0，说明存在无法被 AutoCAD `EXPLODE` 继续展开的对象或受保护/代理对象，需要人工处理或保留为块。
+- 当前真实样本已验证：经过多轮 `explode-dxf` 后，处理后的 DXF 中 modelspace `INSERT` 可清零；该 DXF 可在 AutoCAD 中正常打开、编辑和保存。
 - 真实图纸数据、转换后的 DXF、输出 JSON 和日志均被 `.gitignore` 排除。
 
 ## DXF 解析
@@ -283,14 +313,13 @@ python main.py build-room-candidates `
   --out data/output/json/room_candidates_room_wall_visible.json `
   --floor L2 `
   --boundary-layer '0-面积线' `
-  --boundary-layer '面积平面 - 会议2F- 20.00m平面图$1$A-WALL' `
-  --boundary-layer '05-L2-WALL$1$VT-WALL-总包' `
+  --boundary-layer 'WALL' `
   --boundary-layer 'Defpoints' `
   --axes data/output/json/cad_raw_axis_check.json `
   --columns data/output/json/cad_raw_columns_from_full_real.json
 ```
 
-注意：PowerShell 中包含 `$1` 的图层名必须使用单引号，否则 `$1` 会被变量展开，导致图层规则失真。`ROOM_WALL` 当前样本中右侧 `服务间 2-07（66㎡）` 的闭合边界位于 `Defpoints`，复跑时需要保留该图层。
+注意：PowerShell 中包含 `$1` 的图层名必须使用单引号，否则 `$1` 会被变量展开，导致图层规则失真。`--boundary-layer WALL` 是关键字规则，会纳入图层名中包含 `WALL` 的墙体层，例如 `05-L2-WALL$1$VT-WALL-总包` 和 `面积平面 - 会议2F- 20.00m平面图$1$A-WALL`。`ROOM_WALL` 当前样本中右侧 `服务间 2-07（66㎡）` 的闭合边界位于 `Defpoints`，复跑时需要保留该图层。
 
 输出包括：
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from fnmatch import fnmatchcase
 
 from shapely import set_precision
 from shapely.geometry import LineString, MultiLineString
@@ -316,6 +317,17 @@ def _matches_layer_rule(layer: str, rule: str) -> bool:
         for rule_value in _layer_values(rule):
             if not rule_value:
                 continue
+            if rule_value.startswith("CONTAINS:"):
+                token = rule_value.removeprefix("CONTAINS:").strip()
+                if token and token in layer_value:
+                    return True
+                continue
+            if "*" in rule_value or "?" in rule_value:
+                if fnmatchcase(layer_value, rule_value):
+                    return True
+                continue
+            if _is_keyword_contains_rule(rule_value) and rule_value in layer_value:
+                return True
             if layer_value == rule_value or layer_value.endswith(f"${rule_value}") or layer_value.endswith(rule_value):
                 return True
     return False
@@ -323,3 +335,7 @@ def _matches_layer_rule(layer: str, rule: str) -> bool:
 
 def _layer_values(layer: str) -> set[str]:
     return {str(layer).upper(), recover_gbk_mojibake(str(layer)).upper()}
+
+
+def _is_keyword_contains_rule(rule: str) -> bool:
+    return rule in {"WALL"}

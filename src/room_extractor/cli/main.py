@@ -14,6 +14,7 @@ from room_extractor.cad import (
     analyze_column_features,
     analyze_layers,
     convert_dwg_directory,
+    explode_dxf_directory,
     extract_cad_raw,
     load_dxf,
 )
@@ -76,12 +77,59 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds to wait for each DXF output file.",
     )
     convert_parser.add_argument(
+        "--progress-interval-seconds",
+        type=int,
+        default=30,
+        help="Seconds between AcCoreConsole progress log messages.",
+    )
+    convert_parser.add_argument(
         "--dxf-precision",
         type=int,
         default=16,
         help="DXFOUT decimal precision.",
     )
+    convert_parser.add_argument("--explode-blocks", action="store_true", help="Explode block INSERTs after DWG opens and before DXFOUT.")
+    convert_parser.add_argument(
+        "--max-explode-passes",
+        type=int,
+        default=5,
+        help="Safety cap for automatic repeated explode passes when --explode-blocks is enabled.",
+    )
     convert_parser.set_defaults(func=_run_convert_dwg)
+
+    explode_dxf_parser = subparsers.add_parser("explode-dxf", help="Explode block INSERTs in DXF files with AcCoreConsole.")
+    explode_dxf_parser.add_argument("--input-dir", default="data/input/dxf", help="Directory containing DXF files, or one DXF file path.")
+    explode_dxf_parser.add_argument("--output-dir", default="data/input/dxf_exploded", help="Directory for exploded DXF outputs.")
+    explode_dxf_parser.add_argument("--recursive", action="store_true", help="Scan input directory recursively.")
+    explode_dxf_parser.add_argument("--overwrite", action="store_true", help="Overwrite existing DXF outputs.")
+    explode_dxf_parser.add_argument("--accoreconsole", help="Path to AcCoreConsole.exe. Defaults to PATH/common install folders.")
+    explode_dxf_parser.add_argument("--locale", default="en-US", help="Locale passed to AcCoreConsole /l.")
+    explode_dxf_parser.add_argument("--keep-scripts", action="store_true", help="Keep generated SCR files for debugging.")
+    explode_dxf_parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=300,
+        help="Seconds to wait for each DXF output file.",
+    )
+    explode_dxf_parser.add_argument(
+        "--progress-interval-seconds",
+        type=int,
+        default=30,
+        help="Seconds between AcCoreConsole progress log messages.",
+    )
+    explode_dxf_parser.add_argument(
+        "--dxf-precision",
+        type=int,
+        default=16,
+        help="DXFOUT decimal precision.",
+    )
+    explode_dxf_parser.add_argument(
+        "--max-explode-passes",
+        type=int,
+        default=5,
+        help="Safety cap for automatic repeated explode passes.",
+    )
+    explode_dxf_parser.set_defaults(func=_run_explode_dxf)
 
     labels_parser = subparsers.add_parser("build-room-labels", help="Build Phase 2 room label candidates from cad_raw.json.")
     labels_parser.add_argument("--cad", required=True, help="Path to Phase 1 cad_raw.json.")
@@ -237,6 +285,7 @@ def _run_convert_dwg(args: argparse.Namespace) -> int:
         timeout_seconds=int(args.timeout_seconds),
         dxf_precision=int(args.dxf_precision),
         keep_scripts=bool(args.keep_scripts),
+        progress_interval_seconds=int(args.progress_interval_seconds),
     )
     results = convert_dwg_directory(
         input_dir=Path(args.input_dir),
@@ -244,6 +293,8 @@ def _run_convert_dwg(args: argparse.Namespace) -> int:
         recursive=bool(args.recursive),
         overwrite=bool(args.overwrite),
         converter=converter,
+        explode_blocks=bool(args.explode_blocks),
+        max_explode_passes=int(args.max_explode_passes),
     )
     payload = {
         "input_dir": str(Path(args.input_dir)),
@@ -252,6 +303,37 @@ def _run_convert_dwg(args: argparse.Namespace) -> int:
         "converted": sum(1 for result in results if result.status == "converted"),
         "skipped": sum(1 for result in results if result.status == "skipped"),
         "failed": sum(1 for result in results if result.status == "failed"),
+        "results": [result.to_dict() for result in results],
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 1 if payload["failed"] else 0
+
+
+def _run_explode_dxf(args: argparse.Namespace) -> int:
+    converter = AcCoreConsoleDwgConverter(
+        accoreconsole_path=args.accoreconsole,
+        locale=str(args.locale),
+        timeout_seconds=int(args.timeout_seconds),
+        dxf_precision=int(args.dxf_precision),
+        keep_scripts=bool(args.keep_scripts),
+        progress_interval_seconds=int(args.progress_interval_seconds),
+    )
+    results = explode_dxf_directory(
+        input_dir=Path(args.input_dir),
+        output_dir=Path(args.output_dir),
+        recursive=bool(args.recursive),
+        overwrite=bool(args.overwrite),
+        converter=converter,
+        max_explode_passes=int(args.max_explode_passes),
+    )
+    payload = {
+        "input_dir": str(Path(args.input_dir)),
+        "output_dir": str(Path(args.output_dir)),
+        "total": len(results),
+        "converted": sum(1 for result in results if result.status == "converted"),
+        "skipped": sum(1 for result in results if result.status == "skipped"),
+        "failed": sum(1 for result in results if result.status == "failed"),
+        "remaining_insert_total": sum(result.remaining_insert_count or 0 for result in results),
         "results": [result.to_dict() for result in results],
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
