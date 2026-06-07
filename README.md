@@ -133,6 +133,19 @@ axis_label_layers:
 python main.py extract-cad --dxf data/input/dxf/sample.dxf --out data/output/json/cad_raw_axis_check.json --axis-only --axis-rules path/to/axis_layer_rules.yaml
 ```
 
+也可以用根目录试验脚本从一个人工整理过的源 DXF 中推断轴线提取规则，再应用到另一个目标 DXF：
+
+```powershell
+python infer_dxf_rules.py `
+  --source-dxf "data/input/dxf/L2_20.00m平面图-AXIS.dxf" `
+  --target-dxf "data/input/dxf_exploded/L2_20.00m平面图.dxf" `
+  --out data/output/json/cad_raw_axis_inferred_from_exploded.json `
+  --source-out data/output/json/cad_raw_axis_inferred_source_reference.json `
+  --rules-out data/output/json/inferred_axis_rules_from_axis_to_exploded.json
+```
+
+当前实现用于 AXIS 专项：从源 DXF 图层的名称、冻结/关闭/锁定状态、颜色、线型和图元类型统计中推断轴线层与轴号层；应用到目标 DXF 时优先精确图层名匹配，再按 `$` 后缀和图层属性匹配。脚本仍复用已有 `extract_cad_raw(axis_only=True)`，因此输出 JSON 结构与 `extract-cad --axis-only` 保持一致。`rules-out` 会写入推断规则、源/目标图层 profile 和 `validation` 摘要。若目标 DXF 已经过炸块处理，只要求语义 JSON 结果一致，即 `axes`、`texts`、`issues` 一致；`layers` 中的 `insert_count` 等图层上下文统计允许不同。
+
 `cad_raw.json` 至少包含：
 
 ```json

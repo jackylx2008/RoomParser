@@ -419,6 +419,20 @@ Phase 6 真实输出摘要：
 - HTML 校核命令：`python validate_json_html.py --json data/output/json/cad_raw_axis_check.json --out data/output/reports/json_review_real.html`
 - 当前 HTML 默认只绘制轴线和匹配到的真实轴号，不绘制完整 `texts` / `polylines` 调试底图。
 
+AXIS 规则迁移试验入口：
+
+- 分支：`feature/infer-dxf-extraction-rules`
+- 根目录脚本：`infer_dxf_rules.py`
+- 目标：从人工整理过的源 DXF 推断轴线/轴号提取规则，并应用到完整或炸块后的目标 DXF，输出与现有 `extract-cad --axis-only` 相同结构的 `cad_raw` JSON。
+- 推断特征：源图层名称、`$` 后缀、关闭/冻结/锁定状态、颜色、true color、线型、线宽和图元类型统计。
+- 当前样本：
+  - 源：`data/input/dxf/L2_20.00m平面图-AXIS.dxf`
+  - 目标：`data/input/dxf_exploded/L2_20.00m平面图.dxf`
+  - 推断源规则：轴线层 `A-GRID`，轴号层 `A-ANNO-TXT`
+  - 推断目标规则：轴线层 `A-GRID`，轴号层 `A-ANNO-TXT`
+  - 源/目标均提取轴线 `71` 条、轴号文字 `135` 个、图层 `2` 个
+  - `validation.semantic_json_equal=true`，即 `axes`、`texts`、`issues` 与源 JSON 一致。目标 `L2_20.00m平面图.dxf` 已经过炸块处理，因此只要求 JSON 语义结果一致；`layer_summary_equal=false` 是可接受的，因为源轴号层仍有 `INSERT` 统计而炸块目标中没有。
+
 结构柱专项真实输出摘要：
 
 - 输入 DXF：`data/input/dxf/L2_20.00m平面图-COLUMNS.dxf`
