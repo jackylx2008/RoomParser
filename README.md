@@ -70,6 +70,42 @@ python main.py explode-dxf --input-dir data/input/dxf --output-dir data/input/dx
 
 AcCoreConsole 的中间 DXF、SCR、stdout/stderr 日志，以及子进程环境变量 `TEMP` / `TMP` / `TMPDIR` 默认都写入 `D:/TEMP/room_extractor_acad_*`。这样可以避开 Windows 系统盘空间不足导致的 AutoCAD 致命错误，例如“无法写入放弃文件”。运行完成且未指定 `--keep-scripts` 时，程序会清理本次运行创建的临时子目录。
 
+炸块后的 DXF 可能产生大量重合线性图元。根目录脚本 `dedupe_dxf_lines.py` 可独立统计和清理 `LINE / LWPOLYLINE / POLYLINE / ARC` 重复实体，不接入 `main.py`。默认不写输出；传入 `--out` 时才生成清理后的 DXF：
+
+```powershell
+python dedupe_dxf_lines.py `
+  --input "data/input/dxf_exploded/L2_20.00m平面图.dxf" `
+  --report-out data/output/reports/dxf_exploded_duplicate_stats.json `
+  --progress-interval 500000
+```
+
+保守清理只删除同图层、同几何签名的完全重复或反向一致线性实体，并把结果写回源 DXF 同目录、文件名加 `-DEDUP-EXACT`：
+
+```powershell
+python dedupe_dxf_lines.py `
+  --input "data/input/dxf_exploded/L2_20.00m平面图.dxf" `
+  --out "data/input/dxf_exploded/L2_20.00m平面图-DEDUP-EXACT.dxf" `
+  --report-out "data/output/reports/L2_20.00m平面图-DEDUP-EXACT-report.json" `
+  --dedupe-mode exact `
+  --exact-tolerance 1e-9 `
+  --progress-interval 500000
+```
+
+更激进的近似清理可忽略图层、颜色等属性，只按几何签名和 `--near-tolerance` 量化后的坐标去重，文件名加 `-DEDUP-NEAR`：
+
+```powershell
+python dedupe_dxf_lines.py `
+  --input "data/input/dxf_exploded/L2_20.00m平面图.dxf" `
+  --out "data/input/dxf_exploded/L2_20.00m平面图-DEDUP-NEAR.dxf" `
+  --report-out "data/output/reports/L2_20.00m平面图-DEDUP-NEAR-report.json" `
+  --dedupe-mode near `
+  --signature-scope geometry `
+  --near-tolerance 1.0 `
+  --progress-interval 500000
+```
+
+真实样本 `L2_20.00m平面图.dxf` 已验证：原始 581M；`-DEDUP-EXACT` 删除 `55,847` 个重复线性实体后为 453M；`-DEDUP-NEAR` 在 `near_tolerance=1.0`、`signature_scope=geometry` 下删除 `127,293` 个近似重复线性实体后为 436M。近似清理会跨图层去重，建议先人工打开确认。
+
 如果需要显式指定 AutoCAD 2024 控制台程序：
 
 ```powershell
@@ -83,6 +119,7 @@ python main.py convert-dwg --input-dir data/input/cad --output-dir data/input/dx
 - 转换完成后再把生成的 DXF 移动到目标目录。
 - 炸块输出的 CLI JSON 摘要会记录 `explode_passes` 和 `remaining_insert_count`；如果剩余数量大于 0，说明存在无法被 AutoCAD `EXPLODE` 继续展开的对象或受保护/代理对象，需要人工处理或保留为块。
 - 当前真实样本已验证：经过多轮 `explode-dxf` 后，处理后的 DXF 中 modelspace `INSERT` 可清零；该 DXF 可在 AutoCAD 中正常打开、编辑和保存。
+- 炸块后的重线清理由根目录 `dedupe_dxf_lines.py` 处理，输出 DXF 和报告仍被 `.gitignore` 排除。
 - 真实图纸数据、转换后的 DXF、输出 JSON 和日志均被 `.gitignore` 排除。
 
 ## DXF 解析

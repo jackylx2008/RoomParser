@@ -650,12 +650,21 @@ python -m pytest
 - CLI 输出结果中新增 `explode_passes` 和 `remaining_insert_count`，用于判断是否仍需人工处理。
 - README 已补充 DWG 转 DXF 时炸块、已有 DXF 炸块和剩余图块校核命令。
 - 真实样本已验证：从日志看经过多轮 explode 后，生成 DXF 的 modelspace `remaining_insert_count` 已清零；人工使用 AutoCAD 打开处理后的 DXF，可正常查看、编辑和保存。
+- 新增根目录脚本 `dedupe_dxf_lines.py`，用于炸块后 DXF 的 `LINE / LWPOLYLINE / POLYLINE / ARC` 重线统计与清理，不接入 `main.py`。
+- `dedupe_dxf_lines.py` 默认只统计；传 `--out` 时才写清理后的 DXF。`--dedupe-mode exact` 只删除同图层、坐标完全一致或反向一致的重复线性实体；`--dedupe-mode near --signature-scope geometry` 可忽略图层/颜色等属性，只按近似几何签名去重。
+- 真实样本 `data/input/dxf_exploded/L2_20.00m平面图.dxf` 已验证重线清理：
+  - 原始 DXF：581M
+  - `data/input/dxf_exploded/L2_20.00m平面图-DEDUP-EXACT.dxf`：453M，删除 `55,847` 个 exact 重复线性实体
+  - `data/input/dxf_exploded/L2_20.00m平面图-DEDUP-NEAR.dxf`：436M，在 `near_tolerance=1.0`、`signature_scope=geometry` 下删除 `127,293` 个近似重复线性实体
+  - 报告分别输出到 `data/output/reports/L2_20.00m平面图-DEDUP-EXACT-report.json` 和 `data/output/reports/L2_20.00m平面图-DEDUP-NEAR-report.json`；真实 DXF 和报告仍由 `.gitignore` 排除。
 
 示例命令：
 
 ```powershell
 python main.py convert-dwg --input-dir data/input/cad --output-dir data/input/dxf_exploded --overwrite --explode-blocks --max-explode-passes 5
 python main.py explode-dxf --input-dir data/input/dxf --output-dir data/input/dxf_exploded --overwrite --timeout-seconds 1200 --progress-interval-seconds 10 --max-explode-passes 5
+python dedupe_dxf_lines.py --input "data/input/dxf_exploded/L2_20.00m平面图.dxf" --out "data/input/dxf_exploded/L2_20.00m平面图-DEDUP-EXACT.dxf" --report-out "data/output/reports/L2_20.00m平面图-DEDUP-EXACT-report.json" --dedupe-mode exact --progress-interval 500000
+python dedupe_dxf_lines.py --input "data/input/dxf_exploded/L2_20.00m平面图.dxf" --out "data/input/dxf_exploded/L2_20.00m平面图-DEDUP-NEAR.dxf" --report-out "data/output/reports/L2_20.00m平面图-DEDUP-NEAR-report.json" --dedupe-mode near --signature-scope geometry --near-tolerance 1.0 --progress-interval 500000
 ```
 
 注意：AutoCAD `EXPLODE` 可能把块拆成 `LINE / ARC / LWPOLYLINE / TEXT` 等多类实体，不保证全部变成 `LINE`；动态块、代理对象、外参或受保护对象可能仍保留 `INSERT`，此时 `remaining_insert_count` 会大于 0。
