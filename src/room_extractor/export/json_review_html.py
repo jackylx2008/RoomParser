@@ -34,8 +34,13 @@ class ReviewSource:
     axis_labels: dict[int, tuple[str, str]]
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate an HTML/SVG manual review page from one or more JSON files.")
+    add_json_review_html_arguments(parser)
+    return parser
+
+
+def add_json_review_html_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="append",
@@ -47,8 +52,15 @@ def main() -> int:
     parser.add_argument("--include-polylines", action="store_true", help="Write polylines into the HTML as an optional overlay.")
     parser.add_argument("--include-texts", action="store_true", help="Write text points into the HTML as an optional overlay.")
     parser.add_argument("--include-boundaries", action="store_true", help="Write room boundary candidates into the HTML overlay.")
-    args = parser.parse_args()
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return run_json_review_html(args)
+
+
+def run_json_review_html(args: argparse.Namespace) -> int:
     input_paths = [Path(path) for path in (args.json or [str(DEFAULT_INPUT)])]
     output_path = Path(args.out)
     sources = [

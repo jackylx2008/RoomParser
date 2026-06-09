@@ -1,8 +1,8 @@
 """Infer axis extraction rules from one DXF and apply them to another DXF.
 
-This is an experimental root-level entrypoint for migrating a manually curated
-DXF extraction profile, such as an AXIS-only drawing, back to a full/exploded
-DXF while preserving the existing cad_raw axis-only JSON structure.
+This module migrates a manually curated DXF extraction profile, such as an
+AXIS-only drawing, back to a full/exploded DXF while preserving the existing
+cad_raw axis-only JSON structure.
 
 For exploded target DXF files, validation is intentionally based on semantic
 JSON content (`axes`, `texts`, `issues`). Layer summaries may differ because
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,15 +20,6 @@ from typing import Any, Iterable
 
 from ezdxf.document import Drawing as DxfDrawing
 
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-SRC_PATH = PROJECT_ROOT / "src"
-if str(SRC_PATH) not in sys.path:
-    sys.path.insert(0, str(SRC_PATH))
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except AttributeError:
-    pass
 
 from room_extractor.cad import extract_cad_raw, load_dxf
 from room_extractor.cad.axis_extractor import AXIS_ENTITY_TYPES
@@ -98,6 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
             "targets, validation checks semantic JSON equality instead of layer statistics."
         )
     )
+    add_infer_axis_rules_arguments(parser)
+    return parser
+
+
+def add_infer_axis_rules_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--source-dxf", default=str(DEFAULT_SOURCE_DXF), help="Curated source DXF used to infer rules.")
     parser.add_argument("--target-dxf", default=str(DEFAULT_TARGET_DXF), help="Target DXF to extract with inferred rules.")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="Output cad_raw JSON extracted from the target DXF.")
@@ -110,6 +105,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    return run_infer_axis_rules(args)
+
+
+def run_infer_axis_rules(args: argparse.Namespace) -> int:
     source_dxf = Path(args.source_dxf)
     target_dxf = Path(args.target_dxf)
     out_path = Path(args.out)
