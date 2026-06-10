@@ -6,16 +6,17 @@ from typing import Sequence
 
 from room_extractor import __version__
 from room_extractor.utils.logger import setup_logger
-from room_extractor.workflows import register_dxf_preparation_commands, register_room_extraction_commands
+from room_extractor.workflows.dxf_preparation import register_dxf_preparation_commands
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="room-extractor", description="Building Room Extractor command line tools.")
+    parser = argparse.ArgumentParser(
+        prog="dxf-preparation",
+        description="DXF preparation workflow: DWG/DXF normalization, AutoCAD conversion, explode, and line dedupe.",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-
     subparsers = parser.add_subparsers(dest="command", required=True)
     register_dxf_preparation_commands(subparsers)
-    register_room_extraction_commands(subparsers)
     return parser
 
 

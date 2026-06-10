@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from validate_json_html import _load_source, build_json_review_html
+from room_extractor.export.json_review_html import _load_source, build_json_review_html
 
 
 def test_json_review_html_includes_mouse_wheel_zoom_controls(tmp_path: Path) -> None:

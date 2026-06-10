@@ -5,7 +5,7 @@ from pathlib import Path
 
 import ezdxf
 
-from dedupe_dxf_lines import build_duplicate_report, collect_line_like_records, main, remove_duplicates
+from room_extractor.cad.dxf_line_deduper import build_duplicate_report, collect_line_like_records, main, remove_duplicates
 
 
 def test_collect_line_like_records_counts_exact_and_near_duplicates(tmp_path: Path) -> None:

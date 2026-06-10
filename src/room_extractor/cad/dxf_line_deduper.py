@@ -1,8 +1,9 @@
 """Analyze and optionally remove duplicate line-like entities from a DXF.
 
-This root-level entrypoint is intended for exploded DXF files where repeated
-EXPLODE passes may leave many duplicate LINE/LWPOLYLINE/POLYLINE/ARC entities.
-By default it only writes/prints statistics. Pass --out to save a cleaned DXF.
+This module is part of the DXF preparation workflow. It is intended for exploded
+DXF files where repeated EXPLODE passes may leave many duplicate
+LINE/LWPOLYLINE/POLYLINE/ARC entities. By default it only writes/prints
+statistics. Pass --out to save a cleaned DXF.
 """
 
 from __future__ import annotations
@@ -44,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Without --out this is statistics-only; with --out it writes a cleaned DXF."
         )
     )
+    add_dedupe_dxf_lines_arguments(parser)
+    return parser
+
+
+def add_dedupe_dxf_lines_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Input DXF file.")
     parser.add_argument("--out", help="Optional output DXF path. If omitted, no DXF is modified or written.")
     parser.add_argument("--report-out", help="Optional JSON report path.")
@@ -90,6 +96,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    return run_dedupe_dxf_lines(args)
+
+
+def run_dedupe_dxf_lines(args: argparse.Namespace) -> int:
     input_path = Path(args.input)
     output_path = Path(args.out) if args.out else None
     report_path = Path(args.report_out) if args.report_out else None

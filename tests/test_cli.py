@@ -5,9 +5,12 @@ from pathlib import Path
 
 import ezdxf
 import fitz
+import pytest
 
 from room_extractor.cad.dwg_converter import DwgConversionResult
 from room_extractor.cli.main import main
+from room_extractor.cli.dxf_preparation import main as dxf_preparation_main
+from room_extractor.cli.room_extraction import main as room_extraction_main
 
 
 def test_cli_extract_cad_writes_json(tmp_path: Path) -> None:
@@ -208,8 +211,8 @@ def test_cli_convert_dwg_prints_summary(tmp_path: Path, capsys, monkeypatch) -> 
             )
         ]
 
-    monkeypatch.setattr("room_extractor.cli.main.AcCoreConsoleDwgConverter", FakeAcCoreConsoleDwgConverter)
-    monkeypatch.setattr("room_extractor.cli.main.convert_dwg_directory", fake_convert_dwg_directory)
+    monkeypatch.setattr("room_extractor.workflows.dxf_preparation.AcCoreConsoleDwgConverter", FakeAcCoreConsoleDwgConverter)
+    monkeypatch.setattr("room_extractor.workflows.dxf_preparation.convert_dwg_directory", fake_convert_dwg_directory)
 
     assert (
         main(
@@ -257,8 +260,8 @@ def test_cli_explode_dxf_prints_summary(tmp_path: Path, capsys, monkeypatch) -> 
             )
         ]
 
-    monkeypatch.setattr("room_extractor.cli.main.AcCoreConsoleDwgConverter", FakeAcCoreConsoleDwgConverter)
-    monkeypatch.setattr("room_extractor.cli.main.explode_dxf_directory", fake_explode_dxf_directory)
+    monkeypatch.setattr("room_extractor.workflows.dxf_preparation.AcCoreConsoleDwgConverter", FakeAcCoreConsoleDwgConverter)
+    monkeypatch.setattr("room_extractor.workflows.dxf_preparation.explode_dxf_directory", fake_explode_dxf_directory)
 
     assert (
         main(
@@ -279,6 +282,35 @@ def test_cli_explode_dxf_prints_summary(tmp_path: Path, capsys, monkeypatch) -> 
     assert payload["converted"] == 1
     assert payload["remaining_insert_total"] == 0
     assert seen["explode_kwargs"]["max_explode_passes"] == 2
+
+
+def test_cli_dedupe_dxf_lines_writes_report(tmp_path: Path) -> None:
+    dxf_path = tmp_path / "sample.dxf"
+    report_path = tmp_path / "report.json"
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (100, 0), dxfattribs={"layer": "A-WALL"})
+    msp.add_line((100, 0), (0, 0), dxfattribs={"layer": "A-WALL"})
+    doc.saveas(dxf_path)
+
+    assert main(["dedupe-dxf-lines", "--input", str(dxf_path), "--report-out", str(report_path)]) == 0
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["dedupe_mode"] == "none"
+    assert payload["totals"]["exact_duplicate_count"] == 1
+
+
+def test_workflow_specific_cli_boundaries(capsys) -> None:
+    with pytest.raises(SystemExit) as dxf_error:
+        dxf_preparation_main(["build-room-labels", "--help"])
+    assert dxf_error.value.code == 2
+
+    with pytest.raises(SystemExit) as room_error:
+        room_extraction_main(["convert-dwg", "--help"])
+    assert room_error.value.code == 2
+
+    captured = capsys.readouterr()
+    assert "invalid choice" in captured.err
 
 
 def test_cli_build_room_labels_writes_json(tmp_path: Path) -> None:
