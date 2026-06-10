@@ -797,7 +797,7 @@ def _review_svg(sources: list[ReviewSource], bounds: BBox) -> str:
         color = _source_color(source.index)
         geometry.extend(_boundary_shape(source, boundary, stroke_width) for boundary in source.boundaries)
         geometry.extend(_room_shape(source, room, stroke_width) for room in source.rooms)
-        geometry.extend(_column_shape(source, column, color, stroke_width) for column in source.columns)
+        geometry.extend(_column_shape(source, column, stroke_width) for column in source.columns)
         geometry.extend(_polyline_shape(source, polyline, color, stroke_width) for polyline in source.polylines)
         geometry.extend(_axis_shape(source, axis, color, stroke_width) for axis in source.axes)
         labels.extend(
@@ -886,15 +886,17 @@ def _room_shape(source: ReviewSource, room: dict[str, Any], stroke_width: float)
     )
 
 
-def _column_shape(source: ReviewSource, column: dict[str, Any], color: str, stroke_width: float) -> str:
+def _column_shape(source: ReviewSource, column: dict[str, Any], stroke_width: float) -> str:
     title = escape(f'{source.name} / columns / {column["column_id"]} / {column["layer"]}')
+    fill_color = "#374151"
+    stroke_color = "#111827"
     points = column["polygon"]
     if len(points) >= 3:
         path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + " Z"
         base_stroke = f"{stroke_width * 0.75:.3f}"
         return (
-            f'<path class="source-{source.index} kind-columns" d="{path}" fill="{color}" fill-opacity="0.20" '
-            f'stroke="{color}" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
+            f'<path class="source-{source.index} kind-columns" d="{path}" fill="{fill_color}" fill-opacity="0.62" '
+            f'stroke="{stroke_color}" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
             f'opacity="0.95"><title>{title}</title></path>'
         )
     center = column["center"]
@@ -905,7 +907,7 @@ def _column_shape(source: ReviewSource, column: dict[str, Any], color: str, stro
     base_stroke = f"{stroke_width:.3f}"
     return (
         f'<circle class="source-{source.index} kind-columns" cx="{x:.3f}" cy="{y:.3f}" r="{radius}" data-base-radius="{radius}" '
-        f'fill="{color}" fill-opacity="0.45" stroke="{color}" stroke-width="{base_stroke}" '
+        f'fill="{fill_color}" fill-opacity="0.75" stroke="{stroke_color}" stroke-width="{base_stroke}" '
         f'data-base-stroke-width="{base_stroke}"><title>{title}</title></circle>'
     )
 

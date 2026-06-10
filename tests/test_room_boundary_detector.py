@@ -165,6 +165,38 @@ def test_boundary_detector_can_use_column_edge_as_room_boundary_segment() -> Non
     assert all(boundary.metadata["column_edge_segments_used"] == 4 for boundary in boundaries)
 
 
+def test_boundary_detector_does_not_emit_column_body_as_room_boundary() -> None:
+    column_polygon = [(0, 0), (2000, 0), (2000, 2000), (0, 2000)]
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(
+                layer="A-WALL",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=column_polygon,
+                bbox=(0, 0, 2000, 2000),
+                area=4_000_000,
+            )
+        ],
+    )
+    columns = [
+        CadColumnEntity(
+            column_id="column_00001",
+            layer="A-STR-COLM",
+            entity_type="HATCH",
+            source="hatch_boundary",
+            polygon=column_polygon,
+            bbox=(0, 0, 2000, 2000),
+            area=4_000_000,
+        )
+    ]
+
+    boundaries = build_room_boundary_candidates(cad_raw, boundary_layers=["A-WALL"], columns=columns)
+
+    assert boundaries == []
+
+
 def test_room_candidate_builder_matches_label_to_smallest_containing_polygon() -> None:
     cad_raw = CadRawExtraction(
         source_file="sample.dxf",
@@ -211,6 +243,83 @@ def test_room_candidate_builder_matches_label_to_smallest_containing_polygon() -
     assert room.boundary is not None
     assert room.boundary.area_cad == 1_000_000
     assert room.confidence == 1.0
+
+
+def test_room_candidate_builder_suppresses_collection_polygon_over_small_rooms() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(
+                layer="A-WALL",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (5000, 0), (5000, 2500), (0, 2500)],
+                bbox=(0, 0, 5000, 2500),
+                area=12_500_000,
+            ),
+            CadPolylineEntity(
+                layer="A-WALL",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(0, 0), (2500, 0), (2500, 2500), (0, 2500)],
+                bbox=(0, 0, 2500, 2500),
+                area=6_250_000,
+            ),
+            CadPolylineEntity(
+                layer="A-WALL",
+                entity_type="LWPOLYLINE",
+                closed=True,
+                points=[(2500, 0), (5000, 0), (5000, 2500), (2500, 2500)],
+                bbox=(2500, 0, 5000, 2500),
+                area=6_250_000,
+            ),
+        ],
+    )
+    labels = RoomLabelCandidateSet(
+        source_file="sample.dxf",
+        candidates=[
+            RoomLabelCandidate(
+                candidate_id="label_0001",
+                room_number="101",
+                room_name="办公室",
+                area=6.25,
+                center=(1000, 1000),
+                bbox=(900, 900, 1100, 1100),
+                confidence=1.0,
+            ),
+            RoomLabelCandidate(
+                candidate_id="label_0002",
+                room_number="102",
+                room_name="会议室",
+                area=6.25,
+                center=(4000, 1000),
+                bbox=(3900, 900, 4100, 1100),
+                confidence=1.0,
+            ),
+            RoomLabelCandidate(
+                candidate_id="label_0003",
+                room_number="100",
+                room_name="合集",
+                area=12.5,
+                center=(2500, 1250),
+                bbox=(2400, 1150, 2600, 1350),
+                confidence=1.0,
+            ),
+        ],
+    )
+
+    result = build_room_candidates(cad_raw, labels, boundary_layers=["A-WALL"])
+
+    matched = [room for room in result.room_candidates if room.status == "matched"]
+    suppressed = result.room_candidates[2]
+    assert len(matched) == 2
+    assert suppressed.status == "auto_failed"
+    assert suppressed.boundary is None
+    assert suppressed.match_method == "overlap_suppressed"
+    assert suppressed.issues[-1].issue_code in {
+        "ROOM_BOUNDARY_CONTAINS_SELECTED_ROOM",
+        "ROOM_BOUNDARY_OVERLAPS_SELECTED_ROOM",
+    }
 
 
 def test_room_candidate_builder_prefers_boundary_layer_over_smaller_fallback_polygon() -> None:

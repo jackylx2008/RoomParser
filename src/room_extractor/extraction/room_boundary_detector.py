@@ -4,7 +4,7 @@ from collections import defaultdict
 from fnmatch import fnmatchcase
 
 from shapely import set_precision
-from shapely.geometry import LineString, MultiLineString
+from shapely.geometry import LineString, MultiLineString, Polygon
 from shapely.ops import polygonize, unary_union
 
 from room_extractor.geometry import calculate_bbox
@@ -36,10 +36,13 @@ def build_room_boundary_candidates(
     """Extract filtered closed boundary candidates from cad_raw."""
     candidates: list[RoomBoundaryCandidate] = []
     signatures: set[tuple[float, float, float, float, float]] = set()
+    column_shapes = _column_shapes(columns or [])
     for index, polyline in enumerate(cad_raw.polylines):
         if not _is_usable_boundary(polyline, min_area=min_area, max_area=max_area):
             continue
         if boundary_layers and not _matches_any_layer_rule(polyline.layer, boundary_layers):
+            continue
+        if _is_column_body_candidate(polyline.points, polyline.bbox, float(polyline.area), column_shapes):
             continue
         signature = _boundary_signature(polyline.bbox, float(polyline.area))
         signatures.add(signature)
@@ -64,6 +67,7 @@ def build_room_boundary_candidates(
             boundary_layers=boundary_layers,
             existing_signatures=signatures,
             columns=columns or [],
+            column_shapes=column_shapes,
         )
     )
     return sorted(candidates, key=lambda candidate: _boundary_sort_key(candidate, boundary_layers=boundary_layers))
@@ -91,6 +95,7 @@ def _build_polygonized_segment_candidates(
     boundary_layers: list[str] | None,
     existing_signatures: set[tuple[float, float, float, float, float]],
     columns: list[CadColumnEntity],
+    column_shapes: list[Polygon],
 ) -> list[RoomBoundaryCandidate]:
     """Build closed polygons from exploded LINE/ARC/open-polyline wall segments."""
     if not boundary_layers:
@@ -129,6 +134,8 @@ def _build_polygonized_segment_candidates(
                 continue
             if not _has_usable_bbox(bbox):
                 continue
+            if _is_column_body_candidate(points, bbox, area, column_shapes):
+                continue
             signature = _boundary_signature(bbox, area)
             if signature in existing_signatures:
                 continue
@@ -151,6 +158,50 @@ def _build_polygonized_segment_candidates(
                 )
             )
     return candidates
+
+
+def _column_shapes(columns: list[CadColumnEntity]) -> list[Polygon]:
+    shapes: list[Polygon] = []
+    for column in columns:
+        points = column.polygon
+        if not points and column.bbox:
+            min_x, min_y, max_x, max_y = column.bbox
+            points = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+        if len(points) < 3:
+            continue
+        polygon = Polygon(points)
+        if not polygon.is_empty and polygon.is_valid and polygon.area > 0:
+            shapes.append(polygon)
+    return shapes
+
+
+def _is_column_body_candidate(
+    points: list[tuple[float, float]],
+    bbox: tuple[float, float, float, float] | None,
+    area: float,
+    column_shapes: list[Polygon],
+) -> bool:
+    if not column_shapes or len(points) < 3 or bbox is None or area <= 0:
+        return False
+    polygon = Polygon(points)
+    if polygon.is_empty or not polygon.is_valid or polygon.area <= 0:
+        return False
+    for column_shape in column_shapes:
+        if not _bbox_intersects(bbox, column_shape.bounds):
+            continue
+        intersection_area = polygon.intersection(column_shape).area
+        if intersection_area <= 0:
+            continue
+        candidate_coverage = intersection_area / max(polygon.area, 1.0)
+        column_coverage = intersection_area / max(column_shape.area, 1.0)
+        area_ratio = polygon.area / max(column_shape.area, 1.0)
+        if candidate_coverage >= 0.9 and column_coverage >= 0.9 and 0.75 <= area_ratio <= 1.35:
+            return True
+    return False
+
+
+def _bbox_intersects(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> bool:
+    return not (first[2] < second[0] or second[2] < first[0] or first[3] < second[1] or second[3] < first[1])
 
 
 def _column_segments(columns: list[CadColumnEntity]) -> list[LineString]:

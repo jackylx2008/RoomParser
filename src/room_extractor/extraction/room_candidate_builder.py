@@ -58,6 +58,7 @@ def build_room_candidates(
         _build_room_candidate(index=index + 1, label=label, boundaries=boundaries, floor=floor, boundary_layers=boundary_layers)
         for index, label in enumerate(labels.candidates)
     ]
+    room_candidates = _resolve_room_candidate_geometry_conflicts(room_candidates, boundary_layers=boundary_layers)
     return RoomCandidateSet(
         source_file=cad_raw.source_file,
         label_source_file=labels.source_file,
@@ -434,3 +435,100 @@ def _safe_polygon(points) -> Polygon | None:
     if polygon.is_empty or not polygon.is_valid:
         return None
     return polygon
+
+
+def _resolve_room_candidate_geometry_conflicts(
+    room_candidates: list[RoomCandidate],
+    boundary_layers: list[str] | None = None,
+) -> list[RoomCandidate]:
+    drawable = [(candidate, _safe_polygon(candidate.boundary.polygon_cad)) for candidate in room_candidates if candidate.boundary is not None]
+    drawable = [(candidate, polygon) for candidate, polygon in drawable if polygon is not None and polygon.area > 0]
+    if len(drawable) < 2:
+        return room_candidates
+
+    kept: list[tuple[RoomCandidate, Polygon]] = []
+    suppressed: dict[str, tuple[RoomCandidate, str, RoomCandidate]] = {}
+    for candidate, polygon in sorted(drawable, key=lambda item: _candidate_selection_key(item[0], boundary_layers=boundary_layers)):
+        conflict = next((kept_candidate for kept_candidate, kept_polygon in kept if _room_polygons_conflict(polygon, kept_polygon)), None)
+        if conflict is None:
+            kept.append((candidate, polygon))
+            continue
+        reason = "ROOM_BOUNDARY_CONTAINS_SELECTED_ROOM" if polygon.area > (conflict.boundary.area_cad if conflict.boundary else 0) else "ROOM_BOUNDARY_OVERLAPS_SELECTED_ROOM"
+        suppressed[candidate.room_candidate_id] = (candidate, reason, conflict)
+
+    if not suppressed:
+        return room_candidates
+    return [
+        _suppress_overlapping_room(candidate, *suppressed[candidate.room_candidate_id][1:])
+        if candidate.room_candidate_id in suppressed
+        else candidate
+        for candidate in room_candidates
+    ]
+
+
+def _candidate_selection_key(candidate: RoomCandidate, boundary_layers: list[str] | None = None) -> tuple[int, int, float, float, float]:
+    boundary = candidate.boundary
+    status_rank = 0 if candidate.status == "matched" else 1 if candidate.status == "matched_fallback" else 2
+    layer_rank = boundary_layer_priority(boundary, boundary_layers=boundary_layers) if boundary is not None else 99
+    area_deviation = _candidate_area_deviation(candidate)
+    area = boundary.area_cad if boundary is not None else float("inf")
+    return (status_rank, layer_rank, area_deviation, -candidate.confidence, area)
+
+
+def _candidate_area_deviation(candidate: RoomCandidate) -> float:
+    if candidate.boundary is None or candidate.area_text is None:
+        return float("inf")
+    area_m2 = _boundary_area_m2(candidate.boundary)
+    if area_m2 is None:
+        return float("inf")
+    return _area_deviation_percent(candidate.area_text, area_m2)
+
+
+def _room_polygons_conflict(first: Polygon, second: Polygon) -> bool:
+    if first.is_empty or second.is_empty or not first.bounds or not second.bounds:
+        return False
+    if not _bounds_intersect(first.bounds, second.bounds):
+        return False
+    intersection_area = first.intersection(second).area
+    if intersection_area <= 1.0:
+        return False
+    smaller_area = min(first.area, second.area)
+    larger_area = max(first.area, second.area)
+    smaller_coverage = intersection_area / max(smaller_area, 1.0)
+    larger_coverage = intersection_area / max(larger_area, 1.0)
+    if smaller_coverage >= 0.85:
+        return True
+    return smaller_coverage >= 0.45 and larger_coverage >= 0.2
+
+
+def _bounds_intersect(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> bool:
+    return not (first[2] < second[0] or second[2] < first[0] or first[3] < second[1] or second[3] < first[1])
+
+
+def _suppress_overlapping_room(candidate: RoomCandidate, issue_code: str, selected: RoomCandidate) -> RoomCandidate:
+    issue = Issue(
+        issue_code=issue_code,
+        severity="high",
+        field="geometry",
+        cad_value={
+            "suppressed_boundary_id": candidate.boundary.boundary_id if candidate.boundary else None,
+            "selected_room_candidate_id": selected.room_candidate_id,
+            "selected_boundary_id": selected.boundary.boundary_id if selected.boundary else None,
+        },
+        message="该候选房间与已选房间边界重叠或形成房间合集，已从可绘制房间集合中排除",
+        need_manual_review=True,
+    )
+    return candidate.model_copy(
+        update={
+            "boundary": None,
+            "status": "auto_failed",
+            "match_method": "overlap_suppressed",
+            "confidence": min(candidate.confidence, 0.45),
+            "issues": [*candidate.issues, issue],
+            "metadata": {
+                **candidate.metadata,
+                "suppressed_boundary_id": candidate.boundary.boundary_id if candidate.boundary else None,
+                "suppressed_by_room_candidate_id": selected.room_candidate_id,
+            },
+        }
+    )
