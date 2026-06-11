@@ -154,7 +154,7 @@ python dxf_self_clean_experiment.py --resume log/dxf_cleaning_experiment --max-s
 
 已验证的清理链包括：不可见 modelspace 实体、`ACAD_LAYERSTATES`、未使用 APPID、不可达 blocks、非几何 OBJECTS 元数据、未使用符号表、paper-space layouts、`CLASSES` / `ACDSDATA` 段、`POINT` / `XLINE` 辅助实体、二次 block/table 清理和大型空字典壳。
 
-注意：当前实现没有实际调用本地 AI 或 Qwen；`--dry-run-ai` 只写入占位状态。自动接受依据是 ezdxf reload、结构保护检查、before/after PNG 像素差异和 AutoCAD 人工验证。方法论 skill 已写入 `dxf-data-cleaning-skill/SKILL.md`。
+注意：当前实现没有实际调用本地 AI 或 Qwen；`--dry-run-ai` 只写入占位状态。自动接受依据是 ezdxf reload、结构保护检查、before/after PNG 像素差异和 AutoCAD 人工验证。通用“小步可审计解决问题”方法论 skill 已写入 `auditable-incremental-problem-solving-skill/SKILL.md`，不限定 DXF 或 AutoCAD 场景。
 
 详细记录：
 

@@ -760,7 +760,7 @@ room-extractor dedupe-dxf-lines --input "data/input/dxf_exploded/L2_20.00m平面
 - `dxf_self_clean_experiment.py`：根目录实验脚本，负责 baseline 分析、分步清理、结构保护、PNG 渲染、HTML 报告、rollback 和 manifest 管理。
 - `docs/dxf_self_cleaning_plan.md`：项目计划、逐轮过程和验证记录。
 - `docs/dxf_cleaning_work_summary.md`：本轮工作总结。
-- `dxf-data-cleaning-skill/SKILL.md`：DXF 数据清理方法论 skill，用于后续 AI 自驱动复用。
+- `auditable-incremental-problem-solving-skill/SKILL.md`：通用“小步可审计解决问题”方法论 skill，用于后续 AI 在数据清理、文件转换、代码迁移、视觉输出修复等场景中自驱动复用，不限定 DXF 或 AutoCAD。
 - `log/dxf_cleaning_experiment/`：实验输出目录，包含每轮 DXF、JSON、PNG、HTML 和 rollback 记录；该目录仍不入 Git。
 
 已完成的清理链：
