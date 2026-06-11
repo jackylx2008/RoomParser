@@ -750,3 +750,59 @@ room-extractor dedupe-dxf-lines --input "data/input/dxf_exploded/L2_20.00m平面
 3. 实现人工审核结果回写，生成 `rooms_final.json`。
 4. 将高频问题沉淀为结构分类、边界推断和截图定位规则。
 5. 继续用 `json_review_real.html` 抽查轴线专项 JSON，沉淀更多轴线图层和轴号标注样式。
+
+## 当前接续：DXF 膨胀数据自驱动清理实验
+
+本轮目标：针对 `data/input/dxf_exploded/test.dxf` 与 `test1.dxf` 在 AutoCAD 中显示内容一致但体积差异巨大的问题，建立可审计、可回滚、可复用的 DXF 清理实验流程。原始大文件约 155 MB，参考文件为 323,576 bytes。
+
+新增产物：
+
+- `dxf_self_clean_experiment.py`：根目录实验脚本，负责 baseline 分析、分步清理、结构保护、PNG 渲染、HTML 报告、rollback 和 manifest 管理。
+- `docs/dxf_self_cleaning_plan.md`：项目计划、逐轮过程和验证记录。
+- `docs/dxf_cleaning_work_summary.md`：本轮工作总结。
+- `dxf-data-cleaning-skill/SKILL.md`：DXF 数据清理方法论 skill，用于后续 AI 自驱动复用。
+- `log/dxf_cleaning_experiment/`：实验输出目录，包含每轮 DXF、JSON、PNG、HTML 和 rollback 记录；该目录仍不入 Git。
+
+已完成的清理链：
+
+1. 删除不可见 modelspace 实体。
+2. 删除 `ACAD_LAYERSTATES`。
+3. 删除未使用 APPID。
+4. 删除不可达 block definitions。
+5. 删除颜色书、`SORTENTSTABLE` 等 OBJECTS 元数据。
+6. 删除未使用符号表记录。
+7. 删除 paper-space layouts 和纸空间实体。
+8. 删除 scale list、visual style、image/detail/section/plot/render/sheet/ezdxf 等剩余非几何元数据。
+9. 剥离 `CLASSES` 和 `ACDSDATA` 原始 DXF 段。
+10. 删除 `937` 个 `POINT` 和 `3` 个 `XLINE` 辅助实体，使 modelspace 实体数从 `1436` 对齐到参考文件的 `496`。
+11. 删除辅助实体后变成不可达的 22 个 block。
+12. 二次删除无用 layer、linetype、style 和 APPID 表记录。
+13. 删除两个大型空字典壳：handle `73` 和 `B6`，共 497 条指向字符串 `0` 的无效记录。
+14. 剥离最终再生成的 `CLASSES` 段。
+
+最终结果：
+
+- 最终 accepted DXF：`log/dxf_cleaning_experiment/steps/016_strip_regenerated_classes_section/accepted_after.dxf`
+- 最终大小：437,346 bytes
+- AutoCAD 2024 人工打开验证：通过
+- 最终 modelspace 实体类型：`LINE 409`、`LWPOLYLINE 33`、`ARC 20`、`MTEXT 18`、`HATCH 16`
+
+关键验证策略：
+
+- 每轮只处理一个清理候选。
+- 每轮保存被删数据、候选 DXF、HTML 报告和 PNG。
+- before/after 使用共享 bbox 渲染，像素差异为 0 才能自动推进。
+- 使用 ezdxf reload 和 modelspace / tables / objects 结构保护检查。
+- 高风险节点由用户使用 AutoCAD 2024 人工打开确认。
+
+重要边界：
+
+- `rebuild_visible_modelspace` 曾将文件压到约 344 KB，但 AutoCAD 2024 无法打开，已标记为 rejected，禁止作为自动清理规则复用。
+- 本轮没有实际调用本地 AI 或 Qwen；`--dry-run-ai` 只是占位字段。后续如接入本地视觉模型，只能辅助判读 `comparison.png`，不能替代结构保护和 AutoCAD 验证。
+
+下一步建议：
+
+1. 将 `dxf_self_clean_experiment.py` 中稳定规则抽入 `src` 模块，形成正式 reusable cleaner。
+2. 保留实验 runner 作为编排层，继续输出逐轮报告和 rollback。
+3. 用更多真实 DXF 样本验证 step010-step016 的可复用性。
+4. 在确认规则稳定后，再考虑加入 Workflow A 的正式 CLI。

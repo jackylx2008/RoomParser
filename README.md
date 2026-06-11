@@ -1,12 +1,13 @@
 # Building Room Extractor
 
-建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5 / Phase 6：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、轴线 JSON 提取与校核、结构柱 JSON 提取与特征分析、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核、PDF 局部截图生成。
+建筑图纸房间信息自动提取与 PDF 校核系统。当前实现重点是 Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5 / Phase 6：项目基础结构、DWG 转 DXF、DXF 图层与原始 CAD 对象提取、轴线 JSON 提取与校核、结构柱 JSON 提取与特征分析、房间文字识别与 label 聚类、房间边界识别、初始房间 JSON 生成、PDF 矢量文字机器校核、PDF 局部截图生成，以及 DXF 膨胀数据的自驱动清理实验。
 
 ## 当前能力
 
 - `room-extractor --version` 输出版本号。
 - `room-extractor convert-dwg` 使用本机 AutoCAD `AcCoreConsole.exe` 无界面批量转换 DWG 为 DXF。
 - `room-extractor dedupe-dxf-lines --input <file.dxf>` 统计并可清理炸块后 DXF 中重复的 `LINE / LWPOLYLINE / POLYLINE / ARC`。
+- `python dxf_self_clean_experiment.py --resume log/dxf_cleaning_experiment --max-steps 1 --dry-run-ai` 运行 DXF 自驱动清理实验，每轮生成 DXF、HTML、PNG、删除记录和 rollback point。
 - `room-extractor analyze-layers --dxf <file>` 输出 DXF 图层清单和实体统计；支持 `--visible-only` 只统计未关闭、未冻结、未 invisible 的图元。
 - `room-extractor extract-cad --dxf <file> --out <file>` 输出 `cad_raw.json`，包含图层、文字、块属性、多段线、普通线段、圆弧采样点列和轴网线基础信息；支持 `--visible-only` 过滤关闭 / 冻结 / invisible 图元。
 - `room-extractor extract-cad --dxf <file> --out <file> --axis-only` 仅按轴线规则输出轴线和轴号图层信息，适合生成轴线专项校核 JSON。
@@ -126,6 +127,39 @@ room-extractor dedupe-dxf-lines `
 ```
 
 真实样本 `L2_20.00m平面图.dxf` 已验证：原始 581M；`-DEDUP-EXACT` 删除 `55,847` 个重复线性实体后为 453M；`-DEDUP-NEAR` 在 `near_tolerance=1.0`、`signature_scope=geometry` 下删除 `127,293` 个近似重复线性实体后为 436M。近似清理会跨图层去重，建议先人工打开确认。
+
+## DXF 自驱动清理实验
+
+针对炸块后 DXF 中大量非几何数据导致文件膨胀、计算量增加和房间识别效果下降的问题，项目根目录新增实验脚本：
+
+```powershell
+python dxf_self_clean_experiment.py --resume log/dxf_cleaning_experiment --max-steps 1 --dry-run-ai
+```
+
+该脚本以一个臃肿 DXF 和一个视觉等价的小 DXF 为参考，按小步迭代清理：
+
+- 每轮只删除一类候选数据。
+- 每轮保存 `input.dxf`、`candidate_after.dxf`、`accepted_after.dxf` / `rejected_after.dxf`。
+- 每轮生成 `report.html`、`removed_*.json`、`before_stats.json`、`after_stats.json`、`visual_check.json`。
+- 每轮生成 `reference.png`、`before.png`、`after.png`、`diff.png`、`comparison.png`，用于人工或本地视觉模型复核。
+- 每个 accepted step 都记录 rollback point。
+
+当前实验样本已验证：
+
+- 原始 `test.dxf`：约 155 MB。
+- 参考 `test1.dxf`：323,576 bytes。
+- 最终 accepted DXF：`log/dxf_cleaning_experiment/steps/016_strip_regenerated_classes_section/accepted_after.dxf`。
+- 最终大小：437,346 bytes。
+- AutoCAD 2024 人工打开验证：通过。
+
+已验证的清理链包括：不可见 modelspace 实体、`ACAD_LAYERSTATES`、未使用 APPID、不可达 blocks、非几何 OBJECTS 元数据、未使用符号表、paper-space layouts、`CLASSES` / `ACDSDATA` 段、`POINT` / `XLINE` 辅助实体、二次 block/table 清理和大型空字典壳。
+
+注意：当前实现没有实际调用本地 AI 或 Qwen；`--dry-run-ai` 只写入占位状态。自动接受依据是 ezdxf reload、结构保护检查、before/after PNG 像素差异和 AutoCAD 人工验证。方法论 skill 已写入 `dxf-data-cleaning-skill/SKILL.md`。
+
+详细记录：
+
+- `docs/dxf_self_cleaning_plan.md`
+- `docs/dxf_cleaning_work_summary.md`
 
 如果需要显式指定 AutoCAD 2024 控制台程序：
 
