@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from fnmatch import fnmatchcase
 
 from shapely import set_precision
@@ -16,6 +16,11 @@ from room_extractor.utils.text_normalizer import recover_gbk_mojibake
 
 DEFAULT_MIN_BOUNDARY_AREA = 1_000_000.0
 DEFAULT_MAX_BOUNDARY_AREA = 2_000_000_000.0
+DEFAULT_DOOR_GAP_MIN_WIDTH = 700.0
+DEFAULT_DOOR_GAP_MAX_WIDTH = 2500.0
+DEFAULT_WALL_GAP_STITCH_MAX_WIDTH = 300.0
+DEFAULT_ORTHOGONAL_TOLERANCE = 2.0
+DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH = 50.0
 PREFERRED_BOUNDARY_LAYER_KEYWORDS = (
     "A-AREA-BNDY",
     "ROOM-BOUNDARY",
@@ -32,6 +37,11 @@ def build_room_boundary_candidates(
     max_area: float = DEFAULT_MAX_BOUNDARY_AREA,
     boundary_layers: list[str] | None = None,
     columns: list[CadColumnEntity] | None = None,
+    door_gap_min_width: float = DEFAULT_DOOR_GAP_MIN_WIDTH,
+    door_gap_max_width: float = DEFAULT_DOOR_GAP_MAX_WIDTH,
+    wall_gap_stitch_max_width: float = DEFAULT_WALL_GAP_STITCH_MAX_WIDTH,
+    orthogonal_tolerance: float = DEFAULT_ORTHOGONAL_TOLERANCE,
+    max_non_orthogonal_edge_length: float = DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH,
 ) -> list[RoomBoundaryCandidate]:
     """Extract filtered closed boundary candidates from cad_raw."""
     candidates: list[RoomBoundaryCandidate] = []
@@ -43,6 +53,12 @@ def build_room_boundary_candidates(
         if boundary_layers and not _matches_any_layer_rule(polyline.layer, boundary_layers):
             continue
         if _is_column_body_candidate(polyline.points, polyline.bbox, float(polyline.area), column_shapes):
+            continue
+        if not _is_orthogonal_polygon(
+            polyline.points,
+            tolerance=orthogonal_tolerance,
+            max_non_orthogonal_edge_length=max_non_orthogonal_edge_length,
+        ):
             continue
         signature = _boundary_signature(polyline.bbox, float(polyline.area))
         signatures.add(signature)
@@ -68,6 +84,11 @@ def build_room_boundary_candidates(
             existing_signatures=signatures,
             columns=columns or [],
             column_shapes=column_shapes,
+            door_gap_min_width=door_gap_min_width,
+            door_gap_max_width=door_gap_max_width,
+            wall_gap_stitch_max_width=wall_gap_stitch_max_width,
+            orthogonal_tolerance=orthogonal_tolerance,
+            max_non_orthogonal_edge_length=max_non_orthogonal_edge_length,
         )
     )
     return sorted(candidates, key=lambda candidate: _boundary_sort_key(candidate, boundary_layers=boundary_layers))
@@ -96,6 +117,11 @@ def _build_polygonized_segment_candidates(
     existing_signatures: set[tuple[float, float, float, float, float]],
     columns: list[CadColumnEntity],
     column_shapes: list[Polygon],
+    door_gap_min_width: float,
+    door_gap_max_width: float,
+    wall_gap_stitch_max_width: float,
+    orthogonal_tolerance: float,
+    max_non_orthogonal_edge_length: float,
 ) -> list[RoomBoundaryCandidate]:
     """Build closed polygons from exploded LINE/ARC/open-polyline wall segments."""
     if not boundary_layers:
@@ -116,9 +142,42 @@ def _build_polygonized_segment_candidates(
             continue
         column_segments = _column_segments(columns)
         base_segments = _line_segments(unary_union(segments))
-        bridge_segments = _bridge_segment_gaps(base_segments)
+        stitch_segments = _bridge_segment_gaps(
+            base_segments,
+            min_gap=orthogonal_tolerance,
+            max_gap=wall_gap_stitch_max_width,
+            alignment_tolerance=orthogonal_tolerance,
+        )
+        stitch_segments = _dedupe_segments(
+            [
+                *stitch_segments,
+                *_project_endpoint_gaps(
+                    base_segments,
+                    min_gap=orthogonal_tolerance,
+                    max_gap=wall_gap_stitch_max_width,
+                    alignment_tolerance=orthogonal_tolerance,
+                ),
+            ]
+        )
+        bridge_segments = _bridge_segment_gaps(
+            base_segments,
+            min_gap=door_gap_min_width,
+            max_gap=door_gap_max_width,
+            alignment_tolerance=orthogonal_tolerance,
+        )
+        bridge_segments = _dedupe_segments(
+            [
+                *bridge_segments,
+                *_project_endpoint_gaps(
+                    base_segments,
+                    min_gap=door_gap_min_width,
+                    max_gap=door_gap_max_width,
+                    alignment_tolerance=orthogonal_tolerance,
+                ),
+            ]
+        )
         try:
-            merged = unary_union([*base_segments, *column_segments, *bridge_segments])
+            merged = unary_union([*base_segments, *column_segments, *stitch_segments, *bridge_segments])
             polygons = list(polygonize(merged))
         except Exception:
             continue
@@ -135,6 +194,12 @@ def _build_polygonized_segment_candidates(
             if not _has_usable_bbox(bbox):
                 continue
             if _is_column_body_candidate(points, bbox, area, column_shapes):
+                continue
+            if not _is_orthogonal_polygon(
+                points,
+                tolerance=orthogonal_tolerance,
+                max_non_orthogonal_edge_length=max_non_orthogonal_edge_length,
+            ):
                 continue
             signature = _boundary_signature(bbox, area)
             if signature in existing_signatures:
@@ -153,6 +218,12 @@ def _build_polygonized_segment_candidates(
                     metadata={
                         "boundary_source": "polygonized_open_segments",
                         "door_gap_bridge_count": len(bridge_segments),
+                        "wall_gap_stitch_count": len(stitch_segments),
+                        "door_gap_min_width": door_gap_min_width,
+                        "door_gap_max_width": door_gap_max_width,
+                        "wall_gap_stitch_max_width": wall_gap_stitch_max_width,
+                        "orthogonal_tolerance": orthogonal_tolerance,
+                        "max_non_orthogonal_edge_length": max_non_orthogonal_edge_length,
                         "column_edge_segments_used": len(column_segments),
                     },
                 )
@@ -235,26 +306,30 @@ def _bridge_segment_gaps(
     segments: list[LineString],
     min_gap: float = 400.0,
     max_gap: float = 1800.0,
+    alignment_tolerance: float = DEFAULT_ORTHOGONAL_TOLERANCE,
     direction_cosine_threshold: float = 0.92,
     max_bridges_per_endpoint: int = 1,
 ) -> list[LineString]:
-    endpoints: list[tuple[tuple[float, float], tuple[float, float]]] = []
-    for segment in segments:
+    endpoints: list[tuple[tuple[float, float], tuple[float, float], int]] = []
+    for segment_index, segment in enumerate(segments):
         coords = list(segment.coords)
         if len(coords) < 2:
             continue
-        endpoints.append(((float(coords[0][0]), float(coords[0][1])), _unit_vector(coords[1], coords[0])))
-        endpoints.append(((float(coords[-1][0]), float(coords[-1][1])), _unit_vector(coords[-2], coords[-1])))
+        endpoints.append(((float(coords[0][0]), float(coords[0][1])), _unit_vector(coords[1], coords[0]), segment_index))
+        endpoints.append(((float(coords[-1][0]), float(coords[-1][1])), _unit_vector(coords[-2], coords[-1]), segment_index))
+    endpoint_counts = Counter(_point_key(point) for point, _, _ in endpoints)
 
     bridges: list[LineString] = []
     seen: set[tuple[float, float, float, float]] = set()
     endpoint_bridge_counts: dict[int, int] = defaultdict(int)
     bins: dict[tuple[int, int], list[int]] = defaultdict(list)
     bin_size = max_gap
-    for index, (point, _) in enumerate(endpoints):
+    for index, (point, _, _) in enumerate(endpoints):
         bins[(int(point[0] // bin_size), int(point[1] // bin_size))].append(index)
 
-    for index, (point, direction) in enumerate(endpoints):
+    for index, (point, direction, segment_index) in enumerate(endpoints):
+        if endpoint_counts[_point_key(point)] > 1:
+            continue
         if endpoint_bridge_counts[index] >= max_bridges_per_endpoint:
             continue
         bin_x = int(point[0] // bin_size)
@@ -270,7 +345,11 @@ def _bridge_segment_gaps(
         for other_index in nearby_indices:
             if endpoint_bridge_counts[other_index] >= max_bridges_per_endpoint:
                 continue
-            other_point, other_direction = endpoints[other_index]
+            other_point, other_direction, other_segment_index = endpoints[other_index]
+            if other_segment_index == segment_index:
+                continue
+            if not _is_axis_aligned_gap(point, other_point, tolerance=alignment_tolerance):
+                continue
             distance = _distance(point, other_point)
             if distance < min_gap or distance > max_gap:
                 continue
@@ -295,6 +374,101 @@ def _bridge_segment_gaps(
                 if endpoint_bridge_counts[index] >= max_bridges_per_endpoint:
                     break
     return bridges
+
+
+def _is_axis_aligned_gap(first: tuple[float, float], second: tuple[float, float], tolerance: float) -> bool:
+    return abs(first[0] - second[0]) <= tolerance or abs(first[1] - second[1]) <= tolerance
+
+
+def _project_endpoint_gaps(
+    segments: list[LineString],
+    min_gap: float,
+    max_gap: float,
+    alignment_tolerance: float,
+) -> list[LineString]:
+    """Bridge an open wall endpoint to a perpendicular wall line it should meet."""
+    endpoints: list[tuple[tuple[float, float], tuple[float, float], int]] = []
+    segment_spans: list[tuple[int, tuple[float, float], tuple[float, float]]] = []
+    for segment_index, segment in enumerate(segments):
+        coords = list(segment.coords)
+        if len(coords) < 2:
+            continue
+        start = (float(coords[0][0]), float(coords[0][1]))
+        end = (float(coords[-1][0]), float(coords[-1][1]))
+        endpoints.append((start, _unit_vector(start, coords[1]), segment_index))
+        endpoints.append((end, _unit_vector(end, coords[-2]), segment_index))
+        segment_spans.append((segment_index, start, end))
+    endpoint_counts = Counter(_point_key(point) for point, _, _ in endpoints)
+
+    projected: list[LineString] = []
+    seen: set[tuple[float, float, float, float]] = set()
+    for point, outward_direction, source_index in endpoints:
+        if endpoint_counts[_point_key(point)] > 1:
+            continue
+        candidates: list[tuple[float, tuple[float, float]]] = []
+        for segment_index, start, end in segment_spans:
+            if segment_index == source_index:
+                continue
+            target_direction = _unit_vector(end, start)
+            if abs(_dot(outward_direction, target_direction)) > 0.08:
+                continue
+            projected_point = _axis_projection(point, start, end, tolerance=alignment_tolerance)
+            if projected_point is None:
+                continue
+            if _distance(projected_point, start) <= alignment_tolerance or _distance(projected_point, end) <= alignment_tolerance:
+                continue
+            distance = _distance(point, projected_point)
+            if distance < min_gap or distance > max_gap:
+                continue
+            gap_direction = _unit_vector(projected_point, point)
+            if _dot(outward_direction, gap_direction) < 0.92:
+                continue
+            candidates.append((distance, projected_point))
+        if not candidates:
+            continue
+        _, projected_point = min(candidates, key=lambda item: item[0])
+        key = _segment_key(point, projected_point)
+        if key in seen:
+            continue
+        seen.add(key)
+        line = _line_string_from_points([point, projected_point])
+        if line is not None:
+            projected.append(line)
+    return projected
+
+
+def _axis_projection(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+    tolerance: float,
+) -> tuple[float, float] | None:
+    min_x, max_x = sorted((start[0], end[0]))
+    min_y, max_y = sorted((start[1], end[1]))
+    if abs(start[1] - end[1]) <= tolerance and min_x - tolerance <= point[0] <= max_x + tolerance:
+        return (point[0], start[1])
+    if abs(start[0] - end[0]) <= tolerance and min_y - tolerance <= point[1] <= max_y + tolerance:
+        return (start[0], point[1])
+    return None
+
+
+def _dedupe_segments(segments: list[LineString]) -> list[LineString]:
+    deduped: list[LineString] = []
+    seen: set[tuple[float, float, float, float]] = set()
+    for segment in segments:
+        coords = list(segment.coords)
+        if len(coords) < 2:
+            continue
+        key = _segment_key((float(coords[0][0]), float(coords[0][1])), (float(coords[-1][0]), float(coords[-1][1])))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(segment)
+    return deduped
+
+
+def _point_key(point: tuple[float, float]) -> tuple[float, float]:
+    return (round(point[0], 1), round(point[1], 1))
 
 
 def _unit_vector(start: tuple[float, float], end: tuple[float, float]) -> tuple[float, float]:
@@ -335,6 +509,25 @@ def _has_usable_bbox(bbox: tuple[float, float, float, float]) -> bool:
     bbox_width = bbox[2] - bbox[0]
     bbox_height = bbox[3] - bbox[1]
     return bbox_width > 0 and bbox_height > 0
+
+
+def _is_orthogonal_polygon(
+    points: list[tuple[float, float]],
+    tolerance: float,
+    max_non_orthogonal_edge_length: float,
+) -> bool:
+    if len(points) < 3:
+        return False
+    ring = [*points, points[0]]
+    for start, end in zip(ring, ring[1:]):
+        dx = abs(float(end[0]) - float(start[0]))
+        dy = abs(float(end[1]) - float(start[1]))
+        length = (dx * dx + dy * dy) ** 0.5
+        if length <= tolerance:
+            continue
+        if dx > tolerance and dy > tolerance and length > max_non_orthogonal_edge_length:
+            return False
+    return True
 
 
 def _boundary_signature(bbox: tuple[float, float, float, float] | None, area: float) -> tuple[float, float, float, float, float]:

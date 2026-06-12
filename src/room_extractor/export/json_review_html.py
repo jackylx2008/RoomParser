@@ -938,7 +938,7 @@ def _room_label(source: ReviewSource, room: dict[str, Any], font_size: float) ->
     text = " ".join(value for value in [room["room_number"], room["room_name"]] if value) or room["room_id"]
     if not text:
         return ""
-    return _svg_text(source, position, text, font_size * 0.55, class_name="kind-room-labels")
+    return _svg_text(source, position, text, font_size * 0.9, class_name="kind-room-labels")
 
 
 def _svg_text(source: ReviewSource, point: Point, text: str, font_size: float, class_name: str) -> str:

@@ -403,11 +403,30 @@ def test_cli_build_room_candidates_writes_json(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert main(["build-room-candidates", "--cad", str(cad_path), "--labels", str(labels_path), "--out", str(out_path)]) == 0
+    assert (
+        main(
+            [
+                "build-room-candidates",
+                "--cad",
+                str(cad_path),
+                "--labels",
+                str(labels_path),
+                "--out",
+                str(out_path),
+                "--door-gap-min-width",
+                "700",
+                "--door-gap-max-width",
+                "2500",
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["room_candidates"][0]["status"] == "matched"
     assert payload["room_candidates"][0]["boundary"]["area_cad"] == 4_000_000
+    assert payload["summary"]["door_gap_bridge"]["min_width"] == 700.0
+    assert payload["summary"]["door_gap_bridge"]["max_width"] == 2500.0
 
 
 def test_cli_export_review_map_writes_html(tmp_path: Path) -> None:

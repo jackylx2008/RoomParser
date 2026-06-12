@@ -80,6 +80,36 @@ def register_room_extraction_commands(subparsers: argparse._SubParsersAction[arg
         dest="boundary_layers",
         help="Layer rule to keep as a room boundary. May be repeated; order defines priority.",
     )
+    rooms_parser.add_argument(
+        "--door-gap-min-width",
+        type=float,
+        default=700.0,
+        help="Minimum open wall gap width, in CAD units/mm, bridged as a door opening during wall polygonization.",
+    )
+    rooms_parser.add_argument(
+        "--door-gap-max-width",
+        type=float,
+        default=2500.0,
+        help="Maximum open wall gap width, in CAD units/mm, bridged as a door opening during wall polygonization.",
+    )
+    rooms_parser.add_argument(
+        "--wall-gap-stitch-max-width",
+        type=float,
+        default=300.0,
+        help="Maximum tiny aligned wall gap width, in CAD units/mm, stitched as drafting discontinuity.",
+    )
+    rooms_parser.add_argument(
+        "--orthogonal-tolerance",
+        type=float,
+        default=2.0,
+        help="Coordinate tolerance used to classify room boundary edges as horizontal or vertical.",
+    )
+    rooms_parser.add_argument(
+        "--max-non-orthogonal-edge-length",
+        type=float,
+        default=50.0,
+        help="Reject room boundary polygons with diagonal edges longer than this CAD-unit/mm length.",
+    )
     rooms_parser.add_argument("--axes", help="Optional axis cad_raw JSON to record as spatial context.")
     rooms_parser.add_argument("--columns", help="Optional column cad_raw JSON to add column overlap metadata.")
     rooms_parser.set_defaults(func=_run_build_room_candidates)
@@ -234,6 +264,11 @@ def _run_build_room_candidates(args: argparse.Namespace) -> int:
         boundary_layers=args.boundary_layers,
         axes_raw=axes_raw,
         columns_raw=columns_raw,
+        door_gap_min_width=float(args.door_gap_min_width),
+        door_gap_max_width=float(args.door_gap_max_width),
+        wall_gap_stitch_max_width=float(args.wall_gap_stitch_max_width),
+        orthogonal_tolerance=float(args.orthogonal_tolerance),
+        max_non_orthogonal_edge_length=float(args.max_non_orthogonal_edge_length),
     )
     _write_model_json(out_path, result)
     print(f"Wrote {out_path}")

@@ -4,15 +4,21 @@ from collections import Counter
 from dataclasses import dataclass
 
 from room_extractor.geometry import is_point_in_bbox, is_point_in_polygon, point_to_bbox_distance
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 
-from room_extractor.models.drawing import CadColumnEntity, CadRawExtraction
+from room_extractor.models.drawing import CadColumnEntity, CadPolylineEntity, CadRawExtraction
 from room_extractor.models.issue import Issue
 from room_extractor.models.room_candidate import RoomBoundaryCandidate, RoomCandidate, RoomCandidateSet
-from room_extractor.models.room_label import RoomLabelCandidateSet
+from room_extractor.models.room_label import RoomLabelCandidate, RoomLabelCandidateSet
+from room_extractor.extraction.elevator_symbol_detector import detect_elevator_symbols
 from room_extractor.extraction.room_boundary_detector import (
     DEFAULT_MAX_BOUNDARY_AREA,
     DEFAULT_MIN_BOUNDARY_AREA,
+    DEFAULT_DOOR_GAP_MAX_WIDTH,
+    DEFAULT_DOOR_GAP_MIN_WIDTH,
+    DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH,
+    DEFAULT_ORTHOGONAL_TOLERANCE,
+    DEFAULT_WALL_GAP_STITCH_MAX_WIDTH,
     boundary_layer_priority,
     build_room_boundary_candidates,
 )
@@ -23,7 +29,15 @@ AREA_MATCH_MAX_DISTANCE = 3_000.0
 AREA_MATCH_MAX_DEVIATION_PERCENT = 10.0
 CAD_AREA_TO_M2 = 1_000_000.0
 FALLBACK_SUPPRESSED_SPECIAL_SPACE_NAMES = ("客梯", "货梯", "电梯厅", "走道", "通道")
-ROOM_LIKE_SPECIAL_SPACE_NAMES = ("强电", "弱电", "风井", "水井", "楼梯")
+ROOM_LIKE_SPECIAL_SPACE_NAMES = ("强电", "弱电", "风井", "水井", "楼梯", "排烟井", "排油烟井", "加压")
+STRUCTURAL_ENCLOSURE_LAYER_MARKERS = ("S-BEAM", "A-STR-CONC", "A-STR-BEAM", "结构梁")
+STRUCTURAL_ENCLOSURE_LENGTH_RATIO = 0.75
+STRUCTURAL_WITH_COLUMN_LENGTH_RATIO = 0.75
+STRUCTURAL_ENCLOSURE_MIN_LINE_COUNT = 6
+STRUCTURAL_WITH_COLUMN_MIN_LINE_COUNT = 2
+STRUCTURAL_WITH_COLUMN_MAX_WIDTH = 1_500.0
+STRUCTURAL_WITH_COLUMN_MIN_ASPECT_RATIO = 3.0
+STRUCTURAL_ADJACENT_SHAFT_FALLBACK_MAX_DISTANCE = 1_000.0
 
 
 @dataclass(frozen=True)
@@ -43,22 +57,36 @@ def build_room_candidates(
     boundary_layers: list[str] | None = None,
     axes_raw: CadRawExtraction | None = None,
     columns_raw: CadRawExtraction | None = None,
+    door_gap_min_width: float = DEFAULT_DOOR_GAP_MIN_WIDTH,
+    door_gap_max_width: float = DEFAULT_DOOR_GAP_MAX_WIDTH,
+    wall_gap_stitch_max_width: float = DEFAULT_WALL_GAP_STITCH_MAX_WIDTH,
+    orthogonal_tolerance: float = DEFAULT_ORTHOGONAL_TOLERANCE,
+    max_non_orthogonal_edge_length: float = DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH,
 ) -> RoomCandidateSet:
     """Match Phase 2 labels to Phase 3 CAD boundary candidates."""
+    column_entities = columns_raw.columns if columns_raw is not None else cad_raw.columns
+    columns_summary_raw = columns_raw if columns_raw is not None else cad_raw if cad_raw.columns else None
     boundaries = build_room_boundary_candidates(
         cad_raw,
         min_area=min_boundary_area,
         max_area=max_boundary_area,
         boundary_layers=boundary_layers,
-        columns=columns_raw.columns if columns_raw is not None else None,
+        columns=column_entities,
+        door_gap_min_width=door_gap_min_width,
+        door_gap_max_width=door_gap_max_width,
+        wall_gap_stitch_max_width=wall_gap_stitch_max_width,
+        orthogonal_tolerance=orthogonal_tolerance,
+        max_non_orthogonal_edge_length=max_non_orthogonal_edge_length,
     )
-    if columns_raw is not None:
-        boundaries = _annotate_boundaries_with_columns(boundaries, columns_raw.columns)
+    if column_entities:
+        boundaries = _annotate_boundaries_with_columns(boundaries, column_entities)
+    boundaries = _annotate_boundaries_with_structural_layers(boundaries, cad_raw.polylines, column_entities)
     room_candidates = [
         _build_room_candidate(index=index + 1, label=label, boundaries=boundaries, floor=floor, boundary_layers=boundary_layers)
         for index, label in enumerate(labels.candidates)
     ]
     room_candidates = _resolve_room_candidate_geometry_conflicts(room_candidates, boundary_layers=boundary_layers)
+    room_candidates.extend(_build_elevator_symbol_room_candidates(cad_raw, floor=floor, start_index=len(room_candidates) + 1))
     return RoomCandidateSet(
         source_file=cad_raw.source_file,
         label_source_file=labels.source_file,
@@ -67,11 +95,72 @@ def build_room_candidates(
             room_candidates,
             boundary_layers=boundary_layers,
             axes_raw=axes_raw,
-            columns_raw=columns_raw,
+            columns_raw=columns_summary_raw,
+            door_gap_min_width=door_gap_min_width,
+            door_gap_max_width=door_gap_max_width,
+            wall_gap_stitch_max_width=wall_gap_stitch_max_width,
+            orthogonal_tolerance=orthogonal_tolerance,
+            max_non_orthogonal_edge_length=max_non_orthogonal_edge_length,
         ),
         boundary_candidates=boundaries,
         room_candidates=room_candidates,
     )
+
+
+def _build_elevator_symbol_room_candidates(
+    cad_raw: CadRawExtraction,
+    *,
+    floor: str | None,
+    start_index: int,
+) -> list[RoomCandidate]:
+    rooms: list[RoomCandidate] = []
+    for offset, symbol in enumerate(detect_elevator_symbols(cad_raw)):
+        index = start_index + offset
+        min_x, min_y, max_x, max_y = symbol.bbox_cad
+        center = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
+        label_bbox = (center[0] - 200.0, center[1] - 120.0, center[0] + 200.0, center[1] + 120.0)
+        label = RoomLabelCandidate(
+            candidate_id=f"{symbol.symbol_id}_label",
+            floor=floor,
+            room_name="客梯",
+            room_name_raw="图例识别-电梯",
+            room_category="电梯",
+            center=center,
+            bbox=label_bbox,
+            confidence=0.82,
+        )
+        boundary = RoomBoundaryCandidate(
+            boundary_id=f"{symbol.symbol_id}_boundary",
+            source_polyline_index=symbol.source_polyline_indices[0] if symbol.source_polyline_indices else -1,
+            layer=symbol.layer,
+            entity_type="ELEVATOR_SYMBOL_SHAPE",
+            polygon_cad=symbol.polygon_cad,
+            bbox_cad=symbol.bbox_cad,
+            area_cad=symbol.area_cad,
+            metadata=symbol.metadata,
+        )
+        rooms.append(
+            RoomCandidate(
+                room_candidate_id=f"room_candidate_{index:04d}",
+                floor=floor,
+                room_name="客梯",
+                room_name_raw="图例识别-电梯",
+                room_category="电梯",
+                label_center=center,
+                label_bbox=label_bbox,
+                boundary=boundary,
+                match_method="elevator_symbol_shape",
+                status="matched",
+                confidence=0.82,
+                label=label,
+                metadata={
+                    "recognition_source": "elevator_symbol_shape",
+                    "symbol_id": symbol.symbol_id,
+                    "source_polyline_indices": symbol.source_polyline_indices,
+                },
+            )
+        )
+    return rooms
 
 
 def _build_room_candidate(
@@ -149,8 +238,9 @@ def _find_boundary_match(
     boundaries: list[RoomBoundaryCandidate],
     boundary_layers: list[str] | None = None,
 ) -> BoundaryMatch | None:
-    containing = _containing_boundaries(label.center, boundaries)
-    area_match = _best_text_area_match(label, boundaries, boundary_layers=boundary_layers)
+    usable_boundaries = [boundary for boundary in boundaries if not _is_structural_enclosure_boundary(boundary)]
+    containing = _containing_boundaries(label.center, usable_boundaries)
+    area_match = _best_text_area_match(label, usable_boundaries, boundary_layers=boundary_layers)
     if area_match is not None:
         if not containing:
             return area_match
@@ -164,10 +254,14 @@ def _find_boundary_match(
         return BoundaryMatch(boundary=boundary, method="point_in_polygon_smallest_area")
     if _should_suppress_fallback(label):
         return None
-    fallback = _nearest_preferred_boundary(label.center, boundaries, boundary_layers=boundary_layers)
+    fallback = _nearest_preferred_boundary(label.center, usable_boundaries, boundary_layers=boundary_layers)
     if fallback is None:
         return None
     boundary, distance = fallback
+    if _containing_structural_enclosures(label.center, boundaries) and (
+        distance > STRUCTURAL_ADJACENT_SHAFT_FALLBACK_MAX_DISTANCE or not _is_shaft_like_boundary(boundary)
+    ):
+        return None
     if distance > FALLBACK_MAX_DISTANCE:
         return None
     return BoundaryMatch(
@@ -278,6 +372,16 @@ def _area_match_confidence(label_confidence: float, distance: float, deviation: 
 
 
 def _unmatched_issue(label, boundaries: list[RoomBoundaryCandidate]) -> Issue:
+    structural_boundaries = _containing_structural_enclosures(label.center, boundaries)
+    if structural_boundaries:
+        return Issue(
+            issue_code="STRUCTURAL_LAYER_ENCLOSED_SPACE_NOT_ROOM",
+            severity="medium",
+            field="geometry",
+            cad_value={"boundary_ids": [boundary.boundary_id for boundary in structural_boundaries[:3]]},
+            message="标注落入结构图层闭合空间，该空间不作为房间或竖井边界自动识别",
+            need_manual_review=True,
+        )
     if _is_fallback_suppressed_special_space(label):
         return Issue(
             issue_code="SPECIAL_SPACE_NO_AREA_BOUNDARY",
@@ -343,6 +447,11 @@ def _build_summary(
     boundary_layers: list[str] | None = None,
     axes_raw: CadRawExtraction | None = None,
     columns_raw: CadRawExtraction | None = None,
+    door_gap_min_width: float = DEFAULT_DOOR_GAP_MIN_WIDTH,
+    door_gap_max_width: float = DEFAULT_DOOR_GAP_MAX_WIDTH,
+    wall_gap_stitch_max_width: float = DEFAULT_WALL_GAP_STITCH_MAX_WIDTH,
+    orthogonal_tolerance: float = DEFAULT_ORTHOGONAL_TOLERANCE,
+    max_non_orthogonal_edge_length: float = DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH,
 ) -> dict[str, object]:
     status_counts = Counter(candidate.status for candidate in room_candidates)
     match_method_counts = Counter(candidate.match_method for candidate in room_candidates)
@@ -364,9 +473,32 @@ def _build_summary(
         "issue_counts": dict(issue_counts),
         "complete_matched_count": complete_matched,
         "boundary_layer_counts": dict(boundary_layer_counts),
+        "elevator_symbol_candidate_count": sum(
+            1 for candidate in room_candidates if candidate.metadata.get("recognition_source") == "elevator_symbol_shape"
+        ),
     }
     if boundary_layers:
         summary["boundary_layers"] = boundary_layers
+    summary["door_gap_bridge_count"] = _unique_door_gap_bridge_count(boundaries)
+    summary["wall_gap_stitch_count"] = _unique_wall_gap_stitch_count(boundaries)
+    summary["boundary_count_with_door_gap_bridges"] = sum(
+        1 for boundary in boundaries if int(boundary.metadata.get("door_gap_bridge_count") or 0) > 0
+    )
+    summary["door_gap_bridge"] = {
+        "min_width": door_gap_min_width,
+        "max_width": door_gap_max_width,
+        "description": "Open wall gaps in this width range are bridged as door openings during wall polygonization.",
+    }
+    summary["wall_gap_stitch"] = {
+        "max_width": wall_gap_stitch_max_width,
+        "description": "Tiny aligned wall gaps below this width are stitched as drafting discontinuities, not doors.",
+    }
+    summary["orthogonal_boundary_filter"] = {
+        "enabled": True,
+        "tolerance": orthogonal_tolerance,
+        "max_non_orthogonal_edge_length": max_non_orthogonal_edge_length,
+        "description": "Room boundary polygons with clear diagonal edges are excluded because this project uses horizontal/vertical walls.",
+    }
     if axes_raw is not None:
         summary["axis_context"] = {
             "source_file": axes_raw.source_file,
@@ -381,6 +513,26 @@ def _build_summary(
             "boundaries_with_column_overlap": column_overlap_count,
         }
     return summary
+
+
+def _unique_door_gap_bridge_count(boundaries: list[RoomBoundaryCandidate]) -> int:
+    bridges_by_layer: dict[str, int] = {}
+    for boundary in boundaries:
+        count = int(boundary.metadata.get("door_gap_bridge_count") or 0)
+        if count <= 0:
+            continue
+        bridges_by_layer[boundary.layer] = max(count, bridges_by_layer.get(boundary.layer, 0))
+    return sum(bridges_by_layer.values())
+
+
+def _unique_wall_gap_stitch_count(boundaries: list[RoomBoundaryCandidate]) -> int:
+    stitches_by_layer: dict[str, int] = {}
+    for boundary in boundaries:
+        count = int(boundary.metadata.get("wall_gap_stitch_count") or 0)
+        if count <= 0:
+            continue
+        stitches_by_layer[boundary.layer] = max(count, stitches_by_layer.get(boundary.layer, 0))
+    return sum(stitches_by_layer.values())
 
 
 def _annotate_boundaries_with_columns(
@@ -417,6 +569,141 @@ def _annotate_boundaries_with_columns(
             metadata["usable_area_cad"] = round(max(0.0, boundary.area_cad - overlap_area), 3)
         annotated.append(boundary.model_copy(update={"metadata": metadata}))
     return annotated
+
+
+def _annotate_boundaries_with_structural_layers(
+    boundaries: list[RoomBoundaryCandidate],
+    polylines: list[CadPolylineEntity],
+    columns: list[CadColumnEntity],
+) -> list[RoomBoundaryCandidate]:
+    structural_lines = [
+        (polyline.layer, line)
+        for polyline in polylines
+        if _is_structural_enclosure_layer(polyline.layer)
+        if (line := _line_from_polyline(polyline)) is not None
+    ]
+    column_lines = _column_edge_lines(columns)
+    if not structural_lines and not column_lines:
+        return boundaries
+
+    annotated: list[RoomBoundaryCandidate] = []
+    for boundary in boundaries:
+        room_shape = _safe_polygon(boundary.polygon_cad)
+        if room_shape is None or room_shape.length <= 0:
+            annotated.append(boundary)
+            continue
+        structural_length = 0.0
+        structural_count = 0
+        structural_layers: set[str] = set()
+        column_edge_length = 0.0
+        column_edge_count = 0
+        for layer, line in structural_lines:
+            if not _bounds_intersect(room_shape.bounds, line.bounds):
+                continue
+            intersection = room_shape.intersection(line)
+            length = float(getattr(intersection, "length", 0.0))
+            if length <= 1.0:
+                continue
+            structural_length += length
+            structural_count += 1
+            structural_layers.add(layer)
+        for layer, line in column_lines:
+            if not _bounds_intersect(room_shape.bounds, line.bounds):
+                continue
+            intersection = room_shape.boundary.intersection(line)
+            length = float(getattr(intersection, "length", 0.0))
+            if length <= 1.0:
+                continue
+            column_edge_length += length
+            column_edge_count += 1
+        structural_ratio = structural_length / max(room_shape.length, 1.0)
+        combined_structural_ratio = (structural_length + column_edge_length) / max(room_shape.length, 1.0)
+        metadata = {
+            **boundary.metadata,
+            "structural_layer_line_count": structural_count,
+            "structural_layer_length": round(structural_length, 3),
+            "structural_layer_length_ratio": round(structural_ratio, 3),
+            "structural_layer_names": sorted(structural_layers),
+            "structural_column_edge_count": column_edge_count,
+            "structural_column_edge_length": round(column_edge_length, 3),
+            "structural_combined_length_ratio": round(combined_structural_ratio, 3),
+        }
+        if (
+            structural_count >= STRUCTURAL_ENCLOSURE_MIN_LINE_COUNT
+            and structural_ratio >= STRUCTURAL_ENCLOSURE_LENGTH_RATIO
+        ) or (
+            _is_narrow_structural_space(room_shape)
+            and structural_count >= STRUCTURAL_WITH_COLUMN_MIN_LINE_COUNT
+            and column_edge_count > 0
+            and combined_structural_ratio >= STRUCTURAL_WITH_COLUMN_LENGTH_RATIO
+        ):
+            metadata["structural_enclosure_like"] = True
+        annotated.append(boundary.model_copy(update={"metadata": metadata}))
+    return annotated
+
+
+def _is_structural_enclosure_layer(layer: str) -> bool:
+    upper = layer.upper()
+    return any(marker.upper() in upper for marker in STRUCTURAL_ENCLOSURE_LAYER_MARKERS)
+
+
+def _line_from_polyline(polyline: CadPolylineEntity) -> LineString | None:
+    if len(polyline.points) < 2:
+        return None
+    line = LineString(polyline.points)
+    if line.is_empty or line.length <= 0:
+        return None
+    return line
+
+
+def _column_edge_lines(columns: list[CadColumnEntity]) -> list[tuple[str, LineString]]:
+    lines: list[tuple[str, LineString]] = []
+    for column in columns:
+        points = column.polygon
+        if not points and column.bbox:
+            min_x, min_y, max_x, max_y = column.bbox
+            points = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+        if len(points) < 3:
+            continue
+        ring = [*points, points[0]]
+        for start, end in zip(ring, ring[1:]):
+            line = LineString([start, end])
+            if not line.is_empty and line.length > 0:
+                lines.append((column.layer, line))
+    return lines
+
+
+def _is_narrow_structural_space(shape: Polygon) -> bool:
+    min_x, min_y, max_x, max_y = shape.bounds
+    width = max_x - min_x
+    height = max_y - min_y
+    narrow_side = min(width, height)
+    long_side = max(width, height)
+    if narrow_side <= 0:
+        return False
+    return narrow_side <= STRUCTURAL_WITH_COLUMN_MAX_WIDTH and long_side / narrow_side >= STRUCTURAL_WITH_COLUMN_MIN_ASPECT_RATIO
+
+
+def _is_shaft_like_boundary(boundary: RoomBoundaryCandidate) -> bool:
+    shape = _safe_polygon(boundary.polygon_cad)
+    return bool(shape is not None and _is_narrow_structural_space(shape))
+
+
+def _is_structural_enclosure_boundary(boundary: RoomBoundaryCandidate) -> bool:
+    return bool(boundary.metadata.get("structural_enclosure_like"))
+
+
+def _containing_structural_enclosures(
+    point: tuple[float, float],
+    boundaries: list[RoomBoundaryCandidate],
+) -> list[RoomBoundaryCandidate]:
+    return [
+        boundary
+        for boundary in boundaries
+        if _is_structural_enclosure_boundary(boundary)
+        and is_point_in_bbox(point, boundary.bbox_cad)
+        and is_point_in_polygon(point, boundary.polygon_cad)
+    ]
 
 
 def _column_shape(column: CadColumnEntity) -> Polygon | None:
