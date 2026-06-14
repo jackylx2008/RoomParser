@@ -140,6 +140,26 @@ def test_boundary_detector_polygonizes_exploded_wall_lines_on_configured_layers(
     assert boundaries[0].metadata["boundary_source"] == "polygonized_open_segments"
 
 
+def test_boundary_detector_polygonizes_default_wall_layers_without_explicit_rules() -> None:
+    cad_raw = CadRawExtraction(
+        source_file="sample.dxf",
+        polylines=[
+            CadPolylineEntity(layer="05-L2-WALL$1$VT-WALL-总包", entity_type="LINE", closed=False, points=[(0, 0), (3000, 0)], bbox=(0, 0, 3000, 0)),
+            CadPolylineEntity(layer="05-L2-WALL$1$VT-WALL-总包", entity_type="LINE", closed=False, points=[(3000, 0), (3000, 2000)], bbox=(3000, 0, 3000, 2000)),
+            CadPolylineEntity(layer="05-L2-WALL$1$VT-WALL-总包", entity_type="LINE", closed=False, points=[(3000, 2000), (0, 2000)], bbox=(0, 2000, 3000, 2000)),
+            CadPolylineEntity(layer="05-L2-WALL$1$VT-WALL-总包", entity_type="LINE", closed=False, points=[(0, 2000), (0, 0)], bbox=(0, 0, 0, 2000)),
+            CadPolylineEntity(layer="A-FURN", entity_type="LINE", closed=False, points=[(0, 0), (3000, 2000)], bbox=(0, 0, 3000, 2000)),
+        ],
+    )
+
+    boundaries = build_room_boundary_candidates(cad_raw)
+
+    assert len(boundaries) == 1
+    assert boundaries[0].entity_type == "SEGMENT_POLYGONIZED"
+    assert boundaries[0].layer == "05-L2-WALL$1$VT-WALL-总包"
+    assert boundaries[0].area_cad == 6_000_000
+
+
 def test_boundary_detector_bridges_configured_door_gap_width() -> None:
     cad_raw = CadRawExtraction(
         source_file="sample.dxf",

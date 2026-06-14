@@ -67,7 +67,7 @@
 
 建议新增根目录实验脚本：
 
-- `dxf_self_clean_experiment.py`
+- `experiments/dxf_self_clean_experiment.py`
 
 该脚本复用现有 `src` 内模块：
 
@@ -449,7 +449,7 @@ Copy-Item -LiteralPath "steps/001_exact_duplicate_linework/accepted_after.dxf" -
 第一版入口：
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --source data/input/dxf_exploded/test.dxf `
   --reference data/input/dxf_exploded/test1.dxf `
   --out-dir log/dxf_cleaning_experiment `
@@ -460,7 +460,7 @@ python dxf_self_clean_experiment.py `
 继续实验：
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --resume log/dxf_cleaning_experiment `
   --max-steps 3
 ```
@@ -468,7 +468,7 @@ python dxf_self_clean_experiment.py `
 回滚：
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --resume log/dxf_cleaning_experiment `
   --rollback-to 1
 ```
@@ -476,7 +476,7 @@ python dxf_self_clean_experiment.py `
 只生成报告，不清理：
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --source data/input/dxf_exploded/test.dxf `
   --reference data/input/dxf_exploded/test1.dxf `
   --out-dir log/dxf_cleaning_experiment `
@@ -489,7 +489,7 @@ python dxf_self_clean_experiment.py `
 
 交付内容：
 
-1. 根目录脚本 `dxf_self_clean_experiment.py`。
+1. 实验脚本 `experiments/dxf_self_clean_experiment.py`。
 2. baseline 分析。
 3. 实验目录和 manifest。
 4. 单轮事务目录。
@@ -611,7 +611,7 @@ python dxf_self_clean_experiment.py `
 
 先实现阶段 1，不接复杂渲染和本地 AI：
 
-1. 新增 `dxf_self_clean_experiment.py`。
+1. 新增 `experiments/dxf_self_clean_experiment.py`。
 2. 完成 baseline 统计和 HTML 报告。
 3. 完成 exact duplicate 清理事务。
 4. 保存被清理实体。
@@ -621,9 +621,9 @@ python dxf_self_clean_experiment.py `
 
 ## 当前实现状态
 
-截至 2026-06-11，已新增根目录脚本：
+截至 2026-06-11，已新增实验脚本：
 
-- `dxf_self_clean_experiment.py`
+- `experiments/dxf_self_clean_experiment.py`
 
 已完成并用真实样本执行：
 
@@ -730,7 +730,7 @@ python dxf_self_clean_experiment.py `
 新增脚本能力：
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --resume log/dxf_cleaning_experiment `
   --write-bloat-audit
 ```
@@ -738,7 +738,7 @@ python dxf_self_clean_experiment.py `
 用于在 `bloat_audit/` 下生成剩余膨胀原因报告。
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --resume log/dxf_cleaning_experiment `
   --mark-step-accepted 5 `
   --accept-reason "AutoCAD 2024 can open and save candidate_after.dxf"
@@ -747,7 +747,7 @@ python dxf_self_clean_experiment.py `
 用于在人工确认第 5 轮候选可被 AutoCAD 2024 打开后，将其提升为 accepted。只有接受第 5 轮后，脚本才会继续生成下一轮累计候选。
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --resume log/dxf_cleaning_experiment `
   --max-steps 1 `
   --dry-run-ai
@@ -873,7 +873,7 @@ python dxf_self_clean_experiment.py `
 第 9 轮尚未 accepted，必须先用 AutoCAD 打开 `candidate_after.dxf` 验证。验证通过后可执行：
 
 ```powershell
-python dxf_self_clean_experiment.py `
+python experiments/dxf_self_clean_experiment.py `
   --resume log/dxf_cleaning_experiment `
   --mark-step-accepted 9 `
   --accept-reason "AutoCAD can open candidate_after.dxf in step 9"

@@ -7,9 +7,11 @@ from pathlib import Path
 from room_extractor.cad import (
     AcCoreConsoleDwgConverter,
     add_dedupe_dxf_lines_arguments,
+    add_dxf_self_clean_arguments,
     convert_dwg_directory,
     explode_dxf_directory,
     run_dedupe_dxf_lines,
+    run_dxf_self_clean,
 )
 
 
@@ -90,6 +92,13 @@ def register_dxf_preparation_commands(subparsers: argparse._SubParsersAction[arg
     add_dedupe_dxf_lines_arguments(dedupe_parser)
     dedupe_parser.set_defaults(func=_run_dedupe_dxf_lines)
 
+    self_clean_parser = subparsers.add_parser(
+        "self-clean-dxf",
+        help="Run the auditable 16-stage DXF cleaner with per-step rollback artifacts.",
+    )
+    add_dxf_self_clean_arguments(self_clean_parser)
+    self_clean_parser.set_defaults(func=_run_self_clean_dxf)
+
 
 def _run_convert_dwg(args: argparse.Namespace) -> int:
     converter = AcCoreConsoleDwgConverter(
@@ -155,3 +164,7 @@ def _run_explode_dxf(args: argparse.Namespace) -> int:
 
 def _run_dedupe_dxf_lines(args: argparse.Namespace) -> int:
     return run_dedupe_dxf_lines(args)
+
+
+def _run_self_clean_dxf(args: argparse.Namespace) -> int:
+    return run_dxf_self_clean(args)

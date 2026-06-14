@@ -13,6 +13,7 @@ from room_extractor.config.column_rules import load_column_layer_rules
 from room_extractor.export import export_recognized_rooms_html, export_review_task_html, export_room_candidate_review_html
 from room_extractor.export.json_review_html import add_json_review_html_arguments, run_json_review_html
 from room_extractor.extraction import build_room_candidates, build_room_label_candidates, build_rooms_auto
+from room_extractor.extraction.room_boundary_detector import DEFAULT_MAX_BOUNDARY_AREA, DEFAULT_MIN_BOUNDARY_AREA
 from room_extractor.extraction.room_json_builder import RoomsAutoBuild
 from room_extractor.models.drawing import CadRawExtraction
 from room_extractor.models.room_candidate import RoomCandidateSet
@@ -72,13 +73,23 @@ def register_room_extraction_commands(subparsers: argparse._SubParsersAction[arg
     rooms_parser.add_argument("--labels", required=True, help="Path to Phase 2 room_label_candidates.json.")
     rooms_parser.add_argument("--out", required=True, help="Path to output room_candidates.json.")
     rooms_parser.add_argument("--floor", help="Optional floor value written to candidates.")
-    rooms_parser.add_argument("--min-boundary-area", type=float, default=1_000_000.0, help="Minimum CAD polygon area kept as a boundary.")
-    rooms_parser.add_argument("--max-boundary-area", type=float, default=2_000_000_000.0, help="Maximum CAD polygon area kept as a boundary.")
+    rooms_parser.add_argument(
+        "--min-boundary-area",
+        type=float,
+        default=DEFAULT_MIN_BOUNDARY_AREA,
+        help="Minimum CAD polygon area kept as a boundary. Defaults to the validated wall-boundary recognition threshold.",
+    )
+    rooms_parser.add_argument(
+        "--max-boundary-area",
+        type=float,
+        default=DEFAULT_MAX_BOUNDARY_AREA,
+        help="Maximum CAD polygon area kept as a boundary. Defaults to the validated wall-boundary recognition threshold.",
+    )
     rooms_parser.add_argument(
         "--boundary-layer",
         action="append",
         dest="boundary_layers",
-        help="Layer rule to keep as a room boundary. May be repeated; order defines priority.",
+        help="Layer rule to keep as a room boundary. May be repeated; order defines priority. Defaults to the validated real-room layer set.",
     )
     rooms_parser.add_argument(
         "--door-gap-min-width",

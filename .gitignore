@@ -16,6 +16,7 @@ LOCAL_AI_RUNTIME_SETUP.md
 
 log/
 logs/
+output/
 *.err
 data/input/**
 data/output/**

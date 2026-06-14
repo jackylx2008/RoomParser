@@ -16,6 +16,7 @@ from room_extractor.extraction.room_boundary_detector import (
     DEFAULT_MIN_BOUNDARY_AREA,
     DEFAULT_DOOR_GAP_MAX_WIDTH,
     DEFAULT_DOOR_GAP_MIN_WIDTH,
+    DEFAULT_BOUNDARY_LAYERS,
     DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH,
     DEFAULT_ORTHOGONAL_TOLERANCE,
     DEFAULT_WALL_GAP_STITCH_MAX_WIDTH,
@@ -64,13 +65,14 @@ def build_room_candidates(
     max_non_orthogonal_edge_length: float = DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH,
 ) -> RoomCandidateSet:
     """Match Phase 2 labels to Phase 3 CAD boundary candidates."""
+    effective_boundary_layers = list(DEFAULT_BOUNDARY_LAYERS) if boundary_layers is None else boundary_layers
     column_entities = columns_raw.columns if columns_raw is not None else cad_raw.columns
     columns_summary_raw = columns_raw if columns_raw is not None else cad_raw if cad_raw.columns else None
     boundaries = build_room_boundary_candidates(
         cad_raw,
         min_area=min_boundary_area,
         max_area=max_boundary_area,
-        boundary_layers=boundary_layers,
+        boundary_layers=effective_boundary_layers,
         columns=column_entities,
         door_gap_min_width=door_gap_min_width,
         door_gap_max_width=door_gap_max_width,
@@ -82,10 +84,10 @@ def build_room_candidates(
         boundaries = _annotate_boundaries_with_columns(boundaries, column_entities)
     boundaries = _annotate_boundaries_with_structural_layers(boundaries, cad_raw.polylines, column_entities)
     room_candidates = [
-        _build_room_candidate(index=index + 1, label=label, boundaries=boundaries, floor=floor, boundary_layers=boundary_layers)
+        _build_room_candidate(index=index + 1, label=label, boundaries=boundaries, floor=floor, boundary_layers=effective_boundary_layers)
         for index, label in enumerate(labels.candidates)
     ]
-    room_candidates = _resolve_room_candidate_geometry_conflicts(room_candidates, boundary_layers=boundary_layers)
+    room_candidates = _resolve_room_candidate_geometry_conflicts(room_candidates, boundary_layers=effective_boundary_layers)
     room_candidates.extend(_build_elevator_symbol_room_candidates(cad_raw, floor=floor, start_index=len(room_candidates) + 1))
     return RoomCandidateSet(
         source_file=cad_raw.source_file,
@@ -93,7 +95,7 @@ def build_room_candidates(
         summary=_build_summary(
             boundaries,
             room_candidates,
-            boundary_layers=boundary_layers,
+            boundary_layers=effective_boundary_layers,
             axes_raw=axes_raw,
             columns_raw=columns_summary_raw,
             door_gap_min_width=door_gap_min_width,

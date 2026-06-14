@@ -5,6 +5,7 @@ from room_extractor.cad.column_feature_analyzer import analyze_column_features
 from room_extractor.cad.column_extractor import extract_columns
 from room_extractor.cad.dxf_loader import load_dxf
 from room_extractor.cad.dxf_line_deduper import add_dedupe_dxf_lines_arguments, run_dedupe_dxf_lines
+from room_extractor.cad.dxf_self_cleaner import add_dxf_self_clean_arguments, run_dxf_self_clean
 from room_extractor.cad.dwg_converter import AcCoreConsoleDwgConverter, AutoCadDwgConverter, convert_dwg_directory, explode_dxf_directory
 from room_extractor.cad.layer_analyzer import analyze_layers
 
@@ -12,6 +13,7 @@ __all__ = [
     "AcCoreConsoleDwgConverter",
     "AutoCadDwgConverter",
     "add_dedupe_dxf_lines_arguments",
+    "add_dxf_self_clean_arguments",
     "analyze_column_features",
     "analyze_layers",
     "convert_dwg_directory",
@@ -20,4 +22,5 @@ __all__ = [
     "extract_columns",
     "load_dxf",
     "run_dedupe_dxf_lines",
+    "run_dxf_self_clean",
 ]

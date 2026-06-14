@@ -8,6 +8,7 @@ import fitz
 import pytest
 
 from room_extractor.cad.dwg_converter import DwgConversionResult
+from room_extractor.cad.dxf_self_cleaner import next_cleaning_action
 from room_extractor.cli.main import main
 from room_extractor.cli.dxf_preparation import main as dxf_preparation_main
 from room_extractor.cli.room_extraction import main as room_extraction_main
@@ -300,6 +301,78 @@ def test_cli_dedupe_dxf_lines_writes_report(tmp_path: Path) -> None:
     assert payload["totals"]["exact_duplicate_count"] == 1
 
 
+def test_dxf_self_cleaner_preserves_validated_16_stage_order() -> None:
+    expected_actions = [
+        "remove_exact_duplicate_linework",
+        "remove_invisible_modelspace_entities",
+        "remove_acad_layerstates",
+        "rebuild_visible_modelspace",
+        "remove_unused_appids",
+        "remove_unreachable_blocks",
+        "remove_object_metadata",
+        "remove_unused_symbol_table_records",
+        "remove_paperspace_layouts",
+        "remove_remaining_object_metadata",
+        "strip_classes_and_acdsdata_sections",
+        "remove_auxiliary_points_and_xlines",
+        "remove_unreachable_blocks_after_auxiliary",
+        "remove_unused_tables_after_auxiliary",
+        "remove_large_null_dictionary_shells",
+        "strip_regenerated_classes_section",
+    ]
+    manifest = {"steps": []}
+    actual_actions = []
+
+    while True:
+        action = next_cleaning_action(manifest)
+        if action is None:
+            break
+        actual_actions.append(action)
+        manifest["steps"].append({"name": action, "status": "rejected" if action == "rebuild_visible_modelspace" else "accepted"})
+
+    assert actual_actions == expected_actions
+
+
+def test_cli_self_clean_dxf_analyze_only_writes_manifest_and_rolls_back(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.dxf"
+    reference_path = tmp_path / "reference.dxf"
+    out_dir = tmp_path / "clean"
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (1000, 0), dxfattribs={"layer": "A-WALL"})
+    doc.saveas(source_path)
+    doc.saveas(reference_path)
+
+    assert (
+        main(
+            [
+                "self-clean-dxf",
+                "--source",
+                str(source_path),
+                "--reference",
+                str(reference_path),
+                "--out-dir",
+                str(out_dir),
+                "--analyze-only",
+            ]
+        )
+        == 0
+    )
+
+    manifest_path = out_dir / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["current_step"] == 0
+    assert payload["rollback_points"] == [{"step": 0, "label": "original source", "path": str(source_path.resolve())}]
+    assert payload["steps"][0]["name"] == "baseline"
+    assert Path(payload["current_dxf"]).exists()
+    assert (out_dir / "steps" / "000_baseline" / "report.html").exists()
+
+    assert main(["self-clean-dxf", "--resume", str(out_dir), "--rollback-to", "0"]) == 0
+    rolled_back = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert rolled_back["current_step"] == 0
+    assert Path(rolled_back["current_dxf"]).exists()
+
+
 def test_workflow_specific_cli_boundaries(capsys) -> None:
     with pytest.raises(SystemExit) as dxf_error:
         dxf_preparation_main(["build-room-labels", "--help"])
@@ -427,6 +500,67 @@ def test_cli_build_room_candidates_writes_json(tmp_path: Path) -> None:
     assert payload["room_candidates"][0]["boundary"]["area_cad"] == 4_000_000
     assert payload["summary"]["door_gap_bridge"]["min_width"] == 700.0
     assert payload["summary"]["door_gap_bridge"]["max_width"] == 2500.0
+
+
+def test_cli_build_room_candidates_uses_validated_wall_defaults(tmp_path: Path) -> None:
+    cad_path = tmp_path / "cad_raw.json"
+    labels_path = tmp_path / "room_label_candidates.json"
+    out_path = tmp_path / "room_candidates.json"
+    cad_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "layers": [],
+                "texts": [],
+                "blocks": [],
+                "polylines": [
+                    {"layer": "A-WALL", "entity_type": "LINE", "closed": False, "points": [[0, 0], [4000, 0]], "bbox": [0, 0, 4000, 0]},
+                    {"layer": "A-WALL", "entity_type": "LINE", "closed": False, "points": [[4000, 0], [4000, 3000]], "bbox": [4000, 0, 4000, 3000]},
+                    {"layer": "A-WALL", "entity_type": "LINE", "closed": False, "points": [[4000, 3000], [0, 3000]], "bbox": [0, 3000, 4000, 3000]},
+                    {"layer": "A-WALL", "entity_type": "LINE", "closed": False, "points": [[0, 3000], [0, 0]], "bbox": [0, 0, 0, 3000]},
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    labels_path.write_text(
+        json.dumps(
+            {
+                "source_file": "sample.dxf",
+                "candidates": [
+                    {
+                        "candidate_id": "label_0001",
+                        "floor": "L2",
+                        "room_number": "201",
+                        "room_name": "会议室",
+                        "area": 12.0,
+                        "area_unit": "m2",
+                        "center": [2000, 1500],
+                        "bbox": [1900, 1400, 2100, 1600],
+                        "source_texts": [],
+                        "confidence": 1.0,
+                        "issues": [],
+                    }
+                ],
+                "parsed_texts": [],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["build-room-candidates", "--cad", str(cad_path), "--labels", str(labels_path), "--out", str(out_path)]) == 0
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    room = payload["room_candidates"][0]
+    assert room["status"] == "matched"
+    assert room["boundary"]["entity_type"] == "SEGMENT_POLYGONIZED"
+    assert room["boundary"]["area_cad"] == 12_000_000.0
+    assert payload["summary"]["boundary_layers"][:3] == ["WALL", "0-面积线", "Defpoints"]
+    assert payload["summary"]["boundary_candidate_count"] == 1
 
 
 def test_cli_export_review_map_writes_html(tmp_path: Path) -> None:

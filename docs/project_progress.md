@@ -757,7 +757,7 @@ room-extractor dedupe-dxf-lines --input "data/input/dxf_exploded/L2_20.00m平面
 
 新增产物：
 
-- `dxf_self_clean_experiment.py`：根目录实验脚本，负责 baseline 分析、分步清理、结构保护、PNG 渲染、HTML 报告、rollback 和 manifest 管理。
+- `experiments/dxf_self_clean_experiment.py`：实验脚本，负责 baseline 分析、分步清理、结构保护、PNG 渲染、HTML 报告、rollback 和 manifest 管理。
 - `docs/dxf_self_cleaning_plan.md`：项目计划、逐轮过程和验证记录。
 - `docs/dxf_cleaning_work_summary.md`：本轮工作总结。
 - `auditable-incremental-problem-solving-skill/SKILL.md`：通用“小步可审计解决问题”方法论 skill，用于后续 AI 在数据清理、文件转换、代码迁移、视觉输出修复等场景中自驱动复用，不限定 DXF 或 AutoCAD。
@@ -802,7 +802,7 @@ room-extractor dedupe-dxf-lines --input "data/input/dxf_exploded/L2_20.00m平面
 
 下一步建议：
 
-1. 将 `dxf_self_clean_experiment.py` 中稳定规则抽入 `src` 模块，形成正式 reusable cleaner。
+1. 将 `experiments/dxf_self_clean_experiment.py` 中稳定规则抽入 `src` 模块，形成正式 reusable cleaner。
 2. 保留实验 runner 作为编排层，继续输出逐轮报告和 rollback。
 3. 用更多真实 DXF 样本验证 step010-step016 的可复用性。
 4. 在确认规则稳定后，再考虑加入 Workflow A 的正式 CLI。

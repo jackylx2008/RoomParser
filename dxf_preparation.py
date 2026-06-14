@@ -6,9 +6,9 @@
     ``room_extractor.cli.dxf_preparation`` 中的正式 CLI。
 
     预处理工作流面向房间识别前的数据准备，主要覆盖 DWG 转 DXF、DXF 块
-    炸开、线状实体去重和报告输出等步骤。它的输出通常作为后续房间提取
-    工作流的输入，用于降低 CAD 原图中块引用、重复线和格式差异对识别
-    结果的影响。
+    炸开、线状实体去重、自驱动分步清理和报告输出等步骤。它的输出通常
+    作为后续房间提取工作流的输入，用于降低 CAD 原图中块引用、重复线、
+    无用 OBJECTS/TABLES 数据和格式差异对识别结果的影响。
 
 参数说明：
     该入口文件本身不定义业务参数，运行时接收的命令行参数会透传给
@@ -30,10 +30,16 @@
       ``--report-out``、``--dedupe-mode``、``--exact-tolerance``、
       ``--near-tolerance``、``--signature-scope``、``--visible-only`` 等参数
       控制输入文件、清理输出、报告输出、去重策略和可见图层过滤。
+    - ``self-clean-dxf``：运行正式 16 阶段 DXF 自驱动清理流程，每步生成
+      独立 DXF、HTML、PNG、删除记录和 rollback point；可通过
+      ``--source``、``--reference``、``--out-dir``、``--resume``、
+      ``--max-steps``、``--rollback-to``、``--mark-step-accepted``、
+      ``--mark-step-rejected``、``--render-step-images`` 等参数控制启动、
+      续跑、人工验收和回滚。
 
 用途：
     供用户在项目根目录直接执行 ``python dxf_preparation.py <子命令> ...``，
-    生成规范化、炸块或去重后的 DXF 数据及 JSON 报告。
+    生成规范化、炸块、去重或分步清理后的 DXF 数据及审计报告。
 """
 
 from __future__ import annotations

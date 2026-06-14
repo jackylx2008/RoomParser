@@ -14,13 +14,24 @@ from room_extractor.utils.text_normalizer import normalize_cad_text
 from room_extractor.utils.text_normalizer import recover_gbk_mojibake
 
 
-DEFAULT_MIN_BOUNDARY_AREA = 1_000_000.0
-DEFAULT_MAX_BOUNDARY_AREA = 2_000_000_000.0
+DEFAULT_MIN_BOUNDARY_AREA = 10_000.0
+DEFAULT_MAX_BOUNDARY_AREA = 5_000_000_000.0
 DEFAULT_DOOR_GAP_MIN_WIDTH = 700.0
 DEFAULT_DOOR_GAP_MAX_WIDTH = 2500.0
 DEFAULT_WALL_GAP_STITCH_MAX_WIDTH = 300.0
 DEFAULT_ORTHOGONAL_TOLERANCE = 2.0
 DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH = 50.0
+DEFAULT_BOUNDARY_LAYERS = (
+    "WALL",
+    "0-面积线",
+    "Defpoints",
+    "A-AREA-BNDY",
+    "ROOM-BOUNDARY",
+    "AREA-LINE",
+    "A-SPACE",
+    "面积线",
+    "房间边界",
+)
 PREFERRED_BOUNDARY_LAYER_KEYWORDS = (
     "A-AREA-BNDY",
     "ROOM-BOUNDARY",
@@ -44,13 +55,14 @@ def build_room_boundary_candidates(
     max_non_orthogonal_edge_length: float = DEFAULT_MAX_NON_ORTHOGONAL_EDGE_LENGTH,
 ) -> list[RoomBoundaryCandidate]:
     """Extract filtered closed boundary candidates from cad_raw."""
+    effective_boundary_layers = list(DEFAULT_BOUNDARY_LAYERS) if boundary_layers is None else boundary_layers
     candidates: list[RoomBoundaryCandidate] = []
     signatures: set[tuple[float, float, float, float, float]] = set()
     column_shapes = _column_shapes(columns or [])
     for index, polyline in enumerate(cad_raw.polylines):
         if not _is_usable_boundary(polyline, min_area=min_area, max_area=max_area):
             continue
-        if boundary_layers and not _matches_any_layer_rule(polyline.layer, boundary_layers):
+        if effective_boundary_layers and not _matches_any_layer_rule(polyline.layer, effective_boundary_layers):
             continue
         if _is_column_body_candidate(polyline.points, polyline.bbox, float(polyline.area), column_shapes):
             continue
@@ -80,7 +92,7 @@ def build_room_boundary_candidates(
             start_index=len(candidates),
             min_area=min_area,
             max_area=max_area,
-            boundary_layers=boundary_layers,
+            boundary_layers=effective_boundary_layers,
             existing_signatures=signatures,
             columns=columns or [],
             column_shapes=column_shapes,
@@ -91,7 +103,7 @@ def build_room_boundary_candidates(
             max_non_orthogonal_edge_length=max_non_orthogonal_edge_length,
         )
     )
-    return sorted(candidates, key=lambda candidate: _boundary_sort_key(candidate, boundary_layers=boundary_layers))
+    return sorted(candidates, key=lambda candidate: _boundary_sort_key(candidate, boundary_layers=effective_boundary_layers))
 
 
 def _is_usable_boundary(polyline: CadPolylineEntity, min_area: float, max_area: float) -> bool:
