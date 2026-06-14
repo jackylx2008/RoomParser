@@ -5,7 +5,7 @@ from pathlib import Path
 
 import ezdxf
 
-from infer_dxf_rules import infer_axis_rules, main
+from room_extractor.cad.axis_rule_inferer import infer_axis_rules, main
 
 
 def _add_layer(doc, name: str, color: int = 7, linetype: str = "CONTINUOUS", locked: bool = False):

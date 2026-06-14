@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from validate_json_html import _load_source, build_json_review_html
+from room_extractor.export.json_review_html import _load_source, build_json_review_html
 
 
 def test_json_review_html_includes_mouse_wheel_zoom_controls(tmp_path: Path) -> None:
@@ -19,6 +19,15 @@ def test_json_review_html_includes_mouse_wheel_zoom_controls(tmp_path: Path) -> 
                         "polygon_cad": [[0, 0], [2000, 0], [2000, 2000], [0, 2000]],
                         "bbox_cad": [0, 0, 2000, 2000],
                         "area_cad": 4_000_000,
+                    }
+                ],
+                "columns": [
+                    {
+                        "column_id": "column_00001",
+                        "layer": "A-STR-COLM",
+                        "polygon": [[3000, 0], [3400, 0], [3400, 400], [3000, 400]],
+                        "bbox": [3000, 0, 3400, 400],
+                        "center": [3200, 200],
                     }
                 ],
                 "room_candidates": [
@@ -56,3 +65,5 @@ def test_json_review_html_includes_mouse_wheel_zoom_controls(tmp_path: Path) -> 
     assert "scaleStableStyles" in html
     assert "滚轮缩放" in html
     assert "room_candidate_0001" in html
+    assert 'class="source-1 kind-columns"' in html
+    assert 'fill="#374151"' in html

@@ -34,8 +34,13 @@ class ReviewSource:
     axis_labels: dict[int, tuple[str, str]]
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate an HTML/SVG manual review page from one or more JSON files.")
+    add_json_review_html_arguments(parser)
+    return parser
+
+
+def add_json_review_html_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="append",
@@ -47,8 +52,15 @@ def main() -> int:
     parser.add_argument("--include-polylines", action="store_true", help="Write polylines into the HTML as an optional overlay.")
     parser.add_argument("--include-texts", action="store_true", help="Write text points into the HTML as an optional overlay.")
     parser.add_argument("--include-boundaries", action="store_true", help="Write room boundary candidates into the HTML overlay.")
-    args = parser.parse_args()
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return run_json_review_html(args)
+
+
+def run_json_review_html(args: argparse.Namespace) -> int:
     input_paths = [Path(path) for path in (args.json or [str(DEFAULT_INPUT)])]
     output_path = Path(args.out)
     sources = [
@@ -785,7 +797,7 @@ def _review_svg(sources: list[ReviewSource], bounds: BBox) -> str:
         color = _source_color(source.index)
         geometry.extend(_boundary_shape(source, boundary, stroke_width) for boundary in source.boundaries)
         geometry.extend(_room_shape(source, room, stroke_width) for room in source.rooms)
-        geometry.extend(_column_shape(source, column, color, stroke_width) for column in source.columns)
+        geometry.extend(_column_shape(source, column, stroke_width) for column in source.columns)
         geometry.extend(_polyline_shape(source, polyline, color, stroke_width) for polyline in source.polylines)
         geometry.extend(_axis_shape(source, axis, color, stroke_width) for axis in source.axes)
         labels.extend(
@@ -874,15 +886,17 @@ def _room_shape(source: ReviewSource, room: dict[str, Any], stroke_width: float)
     )
 
 
-def _column_shape(source: ReviewSource, column: dict[str, Any], color: str, stroke_width: float) -> str:
+def _column_shape(source: ReviewSource, column: dict[str, Any], stroke_width: float) -> str:
     title = escape(f'{source.name} / columns / {column["column_id"]} / {column["layer"]}')
+    fill_color = "#374151"
+    stroke_color = "#111827"
     points = column["polygon"]
     if len(points) >= 3:
         path = "M " + " L ".join(f"{x:.3f} {y:.3f}" for x, y in points) + " Z"
         base_stroke = f"{stroke_width * 0.75:.3f}"
         return (
-            f'<path class="source-{source.index} kind-columns" d="{path}" fill="{color}" fill-opacity="0.20" '
-            f'stroke="{color}" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
+            f'<path class="source-{source.index} kind-columns" d="{path}" fill="{fill_color}" fill-opacity="0.62" '
+            f'stroke="{stroke_color}" stroke-width="{base_stroke}" data-base-stroke-width="{base_stroke}" '
             f'opacity="0.95"><title>{title}</title></path>'
         )
     center = column["center"]
@@ -893,7 +907,7 @@ def _column_shape(source: ReviewSource, column: dict[str, Any], color: str, stro
     base_stroke = f"{stroke_width:.3f}"
     return (
         f'<circle class="source-{source.index} kind-columns" cx="{x:.3f}" cy="{y:.3f}" r="{radius}" data-base-radius="{radius}" '
-        f'fill="{color}" fill-opacity="0.45" stroke="{color}" stroke-width="{base_stroke}" '
+        f'fill="{fill_color}" fill-opacity="0.75" stroke="{stroke_color}" stroke-width="{base_stroke}" '
         f'data-base-stroke-width="{base_stroke}"><title>{title}</title></circle>'
     )
 
@@ -924,7 +938,7 @@ def _room_label(source: ReviewSource, room: dict[str, Any], font_size: float) ->
     text = " ".join(value for value in [room["room_number"], room["room_name"]] if value) or room["room_id"]
     if not text:
         return ""
-    return _svg_text(source, position, text, font_size * 0.55, class_name="kind-room-labels")
+    return _svg_text(source, position, text, font_size * 0.9, class_name="kind-room-labels")
 
 
 def _svg_text(source: ReviewSource, point: Point, text: str, font_size: float, class_name: str) -> str:
