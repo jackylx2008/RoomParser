@@ -36,6 +36,11 @@
       ``--max-steps``、``--rollback-to``、``--mark-step-accepted``、
       ``--mark-step-rejected``、``--render-step-images`` 等参数控制启动、
       续跑、人工验收和回滚。
+    - ``prepare-l2-room-dxf``：重放本轮在
+      ``log/dxf_pre_explode_clean_experiment/steps`` 中人工验证过的 L2 房间
+      边界预清理链。默认从已由 AutoCAD 炸开最大两个 modelspace 图块后的
+      step009 DXF 开始，继续删除家具图层、炸开剩余墙/柱 INSERT、删除炸块
+      暴露出的隐藏残留，并输出分阶段 manifest。
 
 用途：
     供用户在项目根目录直接执行 ``python dxf_preparation.py <子命令> ...``，

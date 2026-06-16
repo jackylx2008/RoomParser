@@ -8,10 +8,12 @@ from room_extractor.cad import (
     AcCoreConsoleDwgConverter,
     add_dedupe_dxf_lines_arguments,
     add_dxf_self_clean_arguments,
+    add_l2_room_dxf_preclean_arguments,
     convert_dwg_directory,
     explode_dxf_directory,
     run_dedupe_dxf_lines,
     run_dxf_self_clean,
+    run_l2_room_dxf_preclean,
 )
 
 
@@ -99,6 +101,13 @@ def register_dxf_preparation_commands(subparsers: argparse._SubParsersAction[arg
     add_dxf_self_clean_arguments(self_clean_parser)
     self_clean_parser.set_defaults(func=_run_self_clean_dxf)
 
+    l2_preclean_parser = subparsers.add_parser(
+        "prepare-l2-room-dxf",
+        help="Replay the validated L2 pre-explode room-boundary DXF cleanup chain.",
+    )
+    add_l2_room_dxf_preclean_arguments(l2_preclean_parser)
+    l2_preclean_parser.set_defaults(func=_run_l2_room_dxf_preclean)
+
 
 def _run_convert_dwg(args: argparse.Namespace) -> int:
     converter = AcCoreConsoleDwgConverter(
@@ -168,3 +177,7 @@ def _run_dedupe_dxf_lines(args: argparse.Namespace) -> int:
 
 def _run_self_clean_dxf(args: argparse.Namespace) -> int:
     return run_dxf_self_clean(args)
+
+
+def _run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
+    return run_l2_room_dxf_preclean(args)
