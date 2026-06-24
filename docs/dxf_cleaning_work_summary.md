@@ -261,3 +261,14 @@ step010-step016 已经通过脚本验证和最终 AutoCAD 2024 人工验证，�
 1. 用更多真实 DXF 样本验证 `self-clean-dxf` 的 16 阶段稳定性。
 2. 接入可选本地视觉模型，仅作为辅助判读 `comparison.png`，不能替代结构保护和 AutoCAD 验证。
 3. 根据更多样本结果决定是否新增第 17 阶段；不得扩大现有 16 阶段的删除范围。
+
+## 2026-06-24 L2 ROOM_WALL 复核结论
+
+从 `data/test/L2_20.00m平面图-ROOM_WALL.dxf` 重新运行 L2 预清理时，原始
+`011_remove_reference_absent_unreachable_blocks` 会删除 `*D...` 匿名标注几何块，
+导致 AutoCAD 2024 打开失败并报告 `ErrorStatus=53`、`无效的标注块名`。
+
+新的约束是：不可达块清理只能删除参照缺失的普通命名块，所有 `*` 开头匿名块默认保留。
+使用该保守策略后，`011_safe` 到 `014_safe` 已通过 AutoCAD 2024 AcCoreConsole
+打开/退出验证。当前结果仍是阶段性成果，尚未达到目标文件清洁度；后续继续清理时仍需
+每一步保存 before/after DXF，并做 AutoCAD GUI 目检。

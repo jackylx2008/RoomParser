@@ -108,6 +108,37 @@ python dxf_preparation.py prepare-l2-room-dxf --allow-missing-handles
    同样以 step002 输出作为 baseline，删除后续炸块新增的非柱子细部层：
    - `05-L2-WALL$0$面积平面 - 会议2F- 20.00m平面图$0$A-DETL-GENF`
 
+7. `007_remove_paperspace_layouts`
+   删除 `L2` 之外的多余 paper-space layout，并清空必须保留的 `L2` layout。正式
+   实现仅复用已通过 AutoCAD 2024 验证的 layout 清理规则，不包含实验中被拒绝的
+   不可达块联动删除。可用 `--keep-layout` 覆盖保留布局名称。
+
+8. `008_enable_all_layers`
+   打开并解冻全部图层，同时保护 modelspace 实体结构。
+
+9. `009_dedupe_linework`
+   默认按真实 L2 样本已验证的 `near + geometry + tolerance 1.0` 规则清理线状重
+   线，并生成独立去重报告。可通过正式 CLI 参数覆盖模式、签名作用域和容差。
+
+10. `010_reference_guided_prune`
+    以人工确认的 step014 DXF 为目标，按图层、实体类型和 handle 无关签名删除参照
+    外 modelspace 内容。
+
+11. `011_remove_reference_absent_unreachable_blocks`
+    删除参照中不存在且不可达的非匿名块定义。`*` 开头匿名块必须保留，避免破坏
+    AutoCAD DIMENSION 对 `*D...` 标注几何块的隐式依赖。
+
+12. `012_reference_guided_block_content_prune`
+    对同名共享块内部执行参照签名预算清理，同时严格保护 modelspace。
+
+13. `013_remove_reference_absent_unreachable_blocks`
+    再次删除块内清理后变成不可达的参照外非匿名块；保留 AutoCAD `*D` 等匿名块。
+
+14. `014_iterative_explode_reference_clean`
+    当前和参照同步逐层炸开 modelspace INSERT，每轮立即执行参照签名清理与重线去重，
+    并支持完整 pass 检查点恢复。默认最多 10 轮，可用
+    `--max-reference-explode-passes` 覆盖。
+
    实验中删除 14 个新增非柱子实体，保留新增的 `A-STR-COLM` 柱子几何。
 
 最终文件复制为：
@@ -138,6 +169,12 @@ python dxf_preparation.py prepare-l2-room-dxf --allow-missing-handles
 - `活动家具`、`1-活动家具细线/粗线`、`家具`、`P-家具` 图层内容可删除，用户已用 AutoCAD 确认 `candidate_after_no_furniture_layers.dxf` 没问题。
 - 炸开剩余墙/柱图块后会暴露原始隐藏线段，这些线段并非用户肉眼可见模型空间内容，需要用 baseline 差异删除。
 - step014 自动版保留了新增柱子几何并删除新增非柱子残留；用户随后又在 AutoCAD 中人工处理了 step014 的 `candidate_after.dxf`，该人工版是当前最新识别基准。
+- 2026-06-24 从 `data/test/L2_20.00m平面图-ROOM_WALL.dxf` 重新跑 001-014 后，
+  原始 011 在 AutoCAD 2024 打开失败，报 `ErrorStatus=53` 和 `无效的标注块名`。
+  失败原因是不可达块清理删除了 `*D...` 匿名标注几何块。保守修正为默认保留所有
+  `*` 匿名块后，`011_safe` 到 `014_safe` 均通过 AutoCAD 2024 AcCoreConsole 打开验证。
+  阶段性最终文件是
+  `data/test/L2_20.00m平面图-ROOM_WALL_autocad_recheck/candidate_after_autocad_validated.dxf`。
 
 ## 房间识别复跑命令
 
@@ -159,5 +196,9 @@ python .\room_extraction.py export-json-review-html --json "$out/room_candidates
 ## 未完成事项
 
 - 目前主流程尚未从 `data/input/dxf/L2_20.00m平面图.dxf` 原始文件一键复现到 step014；缺口是 AutoCAD 最大两个 modelspace 图块炸开和用户最后一次 AutoCAD 手工处理。
+- 当前 AutoCAD 可打开验证通过的是 AcCoreConsole 打开/退出检查；仍需用 AutoCAD GUI
+  人工目检确认图纸呈现是否已经接近目标文件。
+- `candidate_after_autocad_validated.dxf` 仍只是阶段性成果，图面还未达到目标文件清洁度；
+  后续应继续按目标文件保留图层做小步差异清理，尤其是残留标注、填充和图块。
 - step014 人工版 polyline 数量明显大于自动版，推测 AutoCAD 保存时展开或重写了更多几何。该变化未破坏当前房间识别数量，但后续应继续观察是否影响性能。
 - 如要把流程扩展到其他楼层，不能直接复用这些 handle；应重新生成 `selected_insert_handles.json` 并走人工审计。

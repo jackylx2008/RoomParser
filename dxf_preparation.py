@@ -40,7 +40,11 @@
       ``log/dxf_pre_explode_clean_experiment/steps`` 中人工验证过的 L2 房间
       边界预清理链。默认从已由 AutoCAD 炸开最大两个 modelspace 图块后的
       step009 DXF 开始，继续删除家具图层、炸开剩余墙/柱 INSERT、删除炸块
-      暴露出的隐藏残留，并输出分阶段 manifest。
+      暴露出的隐藏残留、删除多余图纸空间并清空保留的 L2 layout，最后输出
+      分阶段 manifest。最终阶段会打开并解冻全部图层，再按已验证的 L2
+      near/geometry 规则清理完全重线和近似重线，并以人工确认的 step014
+      DXF 为参照清理额外实体和不可达块。最后同步逐层炸开当前与参照中的
+      modelspace INSERT，每炸一层立即参照清理和去重，直到当前 INSERT 清零。
 
 用途：
     供用户在项目根目录直接执行 ``python dxf_preparation.py <子命令> ...``，
