@@ -26,6 +26,8 @@ from room_extractor.extraction.room_text_parser import extract_room_name, extrac
 
 
 TEXT_TYPES = {"TEXT", "MTEXT", "ATTRIB", "ATTDEF"}
+LINEAR_ENTITY_TYPES = {"LINE", "LWPOLYLINE", "POLYLINE", "ARC"}
+DOOR_PROTECTION_TOKEN = "door"
 
 DEFAULT_SOURCE = Path(
     "log/dxf_pre_explode_clean_experiment/steps/009_explode_largest_two_modelspace_blocks/candidate_after.dxf"
@@ -135,6 +137,48 @@ DEFAULT_CLEANUP_REFERENCE = Path(
 )
 DEFAULT_REFERENCE_TOLERANCE = 1.0
 DEFAULT_MAX_REFERENCE_EXPLODE_PASSES = 10
+DEFAULT_LAYER_POLICY_JSON: Path | None = None
+DEFAULT_FINAL_LAYER_POLICY_JSON: Path | None = None
+WALL_PRESERVE_LAYER_TOKENS = [
+    "WALL",
+    "墙",
+    "幕墙",
+    "FINISH",
+    "完成面",
+    "DOOR",
+    "门",
+    "IBS-",
+]
+WALL_PRESERVE_EXCLUDE_LAYER_TOKENS = [
+    "DIM",
+    "ANNO",
+    "AREA",
+    "CEIL",
+    "LIGHT",
+    "LIGT",
+    "LTG",
+    "EQUIP",
+    "DUCT",
+    "风口",
+    "喷淋",
+    "定位",
+    "标注",
+    "轴号",
+    "编号",
+    "文字",
+    "TEXT",
+    "材质",
+    "地面",
+    "FLOOR",
+    "FL",
+    "REFE",
+    "GRID",
+    "CCTV",
+    "电",
+    "灯",
+    "天花",
+    "吊顶",
+]
 
 
 def add_l2_room_dxf_preclean_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -155,7 +199,10 @@ def add_l2_room_dxf_preclean_arguments(parser: argparse.ArgumentParser) -> argpa
     parser.add_argument(
         "--allow-missing-handles",
         action="store_true",
-        help="Continue if a configured INSERT handle is absent. By default this is treated as a failed replay.",
+        help=(
+            "Continue if a configured INSERT handle is absent or no longer an INSERT. "
+            "By default this is treated as a failed replay."
+        ),
     )
     parser.add_argument(
         "--furniture-layer",
@@ -223,6 +270,37 @@ def add_l2_room_dxf_preclean_arguments(parser: argparse.ArgumentParser) -> argpa
             f"Default: {DEFAULT_MAX_REFERENCE_EXPLODE_PASSES}."
         ),
     )
+    parser.add_argument(
+        "--post-009-cleanup-mode",
+        choices=["preserve-door", "reference-guided"],
+        default="preserve-door",
+        help=(
+            "Cleanup path after stage 009. preserve-door is the AutoCAD/manual-validated flow that unlocks layers, "
+            "removes non-door HATCH entities, and dedupes non-door linework. reference-guided keeps the older "
+            "reference-prune chain. Default: preserve-door."
+        ),
+    )
+    parser.add_argument(
+        "--layer-policy-json",
+        default=str(DEFAULT_LAYER_POLICY_JSON) if DEFAULT_LAYER_POLICY_JSON else None,
+        help=(
+            "Optional layer export JSON. When set, every explode step deletes entities and layer records for "
+            "layers absent from the JSON, hidden, frozen, or non-plottable in the JSON."
+        ),
+    )
+    parser.add_argument(
+        "--final-layer-policy-json",
+        default=str(DEFAULT_FINAL_LAYER_POLICY_JSON) if DEFAULT_FINAL_LAYER_POLICY_JSON else None,
+        help=(
+            "Optional layer export JSON applied after the preserve-door cleanup. "
+            "It deletes frozen/non-plottable/absent policy layers while preserving wall, door, and finish layers."
+        ),
+    )
+    parser.add_argument(
+        "--skip-xref-cleanup",
+        action="store_true",
+        help="Skip the final cleanup stage that removes bound/external reference layers and unreachable xref blocks.",
+    )
     return parser
 
 
@@ -236,16 +314,21 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
     wall_handles = normalize_handles(args.wall_handles or DEFAULT_WALL_INSERT_HANDLES)
     column_handles = normalize_handles(args.column_handles or DEFAULT_COLUMN_INSERT_HANDLES)
     review_wall_handles = normalize_handles(args.review_wall_handles or DEFAULT_REVIEW_WALL_INSERT_HANDLES)
+    layer_policy_json = getattr(args, "layer_policy_json", None)
+    layer_policy = load_layer_policy_json(Path(layer_policy_json)) if layer_policy_json else None
+    final_layer_policy_json = getattr(args, "final_layer_policy_json", None)
+    final_layer_policy = load_layer_policy_json(Path(final_layer_policy_json)) if final_layer_policy_json else None
 
     stages: list[dict[str, Any]] = []
     current = source
 
     stage_dir = out_dir / "001_delete_furniture_layers"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(source, stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         delete_exact_layers(
-            source=source,
+            source=stage_input,
             out=current,
             layers=set(furniture_layers),
             manifest_path=stage_dir / "manifest.json",
@@ -254,52 +337,59 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
 
     stage_dir = out_dir / "002_explode_remaining_wall_inserts"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         explode_insert_handles(
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             handles=wall_handles,
             manifest_path=stage_dir / "manifest.json",
             allow_missing=allow_missing,
+            layer_policy=layer_policy,
         )
     )
     wall_baseline = current
 
     stage_dir = out_dir / "003_explode_remaining_column_inserts"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         explode_insert_handles(
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             handles=column_handles,
             manifest_path=stage_dir / "manifest.json",
             allow_missing=allow_missing,
+            layer_policy=layer_policy,
         )
     )
 
     stage_dir = out_dir / "004_explode_review_wall_inserts"
     stage_dir.mkdir(parents=True, exist_ok=True)
     review_wall_handles = merge_handles(select_review_wall_insert_handles(stages[-1]["out_path"]), review_wall_handles)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         explode_insert_handles(
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             handles=review_wall_handles,
             manifest_path=stage_dir / "manifest.json",
             allow_missing=allow_missing,
+            layer_policy=layer_policy,
         )
     )
 
     stage_dir = out_dir / "005_remove_added_layer0_after_explode"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         delete_added_entities_by_layer(
             baseline=wall_baseline,
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             layers=set(DEFAULT_ADDED_LAYER0),
             manifest_path=stage_dir / "manifest.json",
@@ -308,11 +398,12 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
 
     stage_dir = out_dir / "006_keep_only_added_column_geometry_after_explode"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         delete_added_entities_by_layer(
             baseline=wall_baseline,
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             layers=set(DEFAULT_ADDED_NON_COLUMN_LAYERS),
             manifest_path=stage_dir / "manifest.json",
@@ -321,10 +412,11 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
 
     stage_dir = out_dir / "007_remove_paperspace_layouts"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         remove_paperspace_layouts(
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             keep_layout=str(args.keep_layout),
             manifest_path=stage_dir / "manifest.json",
@@ -333,10 +425,11 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
 
     stage_dir = out_dir / "008_enable_all_layers"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         enable_all_layers(
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             manifest_path=stage_dir / "manifest.json",
         )
@@ -344,10 +437,11 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
 
     stage_dir = out_dir / "009_dedupe_linework"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
     current = stage_dir / "candidate_after.dxf"
     stages.append(
         dedupe_linework(
-            source=stages[-1]["out_path"],
+            source=stage_input,
             out=current,
             report_path=stage_dir / "duplicate_report.json",
             manifest_path=stage_dir / "manifest.json",
@@ -358,78 +452,155 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
         )
     )
 
-    stage_dir = out_dir / "010_reference_guided_prune"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    current = stage_dir / "candidate_after.dxf"
-    stages.append(
-        reference_guided_prune(
-            source=stages[-1]["out_path"],
-            reference=Path(args.cleanup_reference),
-            out=current,
-            report_path=stage_dir / "reference_prune_report.json",
-            manifest_path=stage_dir / "manifest.json",
-            tolerance=float(args.reference_tolerance),
+    post_009_cleanup_mode = str(getattr(args, "post_009_cleanup_mode", "preserve-door"))
+    if post_009_cleanup_mode == "preserve-door":
+        stage_dir = out_dir / "010_unlock_all_layers_preserve_door"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            unlock_all_layers_preserve_door(
+                source=stage_input,
+                out=current,
+                manifest_path=stage_dir / "manifest.json",
+            )
         )
-    )
 
-    stage_dir = out_dir / "011_remove_reference_absent_unreachable_blocks"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    current = stage_dir / "candidate_after.dxf"
-    stages.append(
-        remove_reference_absent_unreachable_blocks(
-            source=stages[-1]["out_path"],
-            reference=Path(args.cleanup_reference),
-            out=current,
-            report_path=stage_dir / "removed_blocks.json",
-            manifest_path=stage_dir / "manifest.json",
+        stage_dir = out_dir / "011_remove_hatches_preserve_door"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            remove_hatches_preserve_door(
+                source=stage_input,
+                out=current,
+                manifest_path=stage_dir / "manifest.json",
+            )
         )
-    )
 
-    stage_dir = out_dir / "012_reference_guided_block_content_prune"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    current = stage_dir / "candidate_after.dxf"
-    stages.append(
-        reference_guided_block_content_prune(
-            source=stages[-1]["out_path"],
-            reference=Path(args.cleanup_reference),
-            out=current,
-            report_path=stage_dir / "block_content_prune_report.json",
-            manifest_path=stage_dir / "manifest.json",
-            tolerance=float(args.reference_tolerance),
+        stage_dir = out_dir / "012_dedupe_linework_preserve_door"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            dedupe_linework_preserve_door(
+                source=stage_input,
+                out=current,
+                manifest_path=stage_dir / "manifest.json",
+                mode=str(args.dedupe_mode),
+                signature_scope=str(args.dedupe_signature_scope),
+                exact_tolerance=float(args.exact_tolerance),
+                near_tolerance=float(args.near_tolerance),
+            )
         )
-    )
 
-    stage_dir = out_dir / "013_remove_reference_absent_unreachable_blocks"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    current = stage_dir / "candidate_after.dxf"
-    stages.append(
-        remove_reference_absent_unreachable_blocks(
-            source=stages[-1]["out_path"],
-            reference=Path(args.cleanup_reference),
-            out=current,
-            report_path=stage_dir / "removed_blocks.json",
-            manifest_path=stage_dir / "manifest.json",
+        if final_layer_policy is not None:
+            stage_dir = out_dir / "013_apply_layer_policy_preserve_walls_doors"
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+            current = stage_dir / "candidate_after.dxf"
+            stages.append(
+                apply_layer_policy_preserve_walls_doors(
+                    source=stage_input,
+                    out=current,
+                    manifest_path=stage_dir / "manifest.json",
+                    layer_policy=final_layer_policy,
+                    layer_policy_json=Path(final_layer_policy_json),
+                )
+            )
+    else:
+        stage_dir = out_dir / "010_reference_guided_prune"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            reference_guided_prune(
+                source=stage_input,
+                reference=Path(args.cleanup_reference),
+                out=current,
+                report_path=stage_dir / "reference_prune_report.json",
+                manifest_path=stage_dir / "manifest.json",
+                tolerance=float(args.reference_tolerance),
+            )
         )
-    )
 
-    stage_dir = out_dir / "014_iterative_explode_reference_clean"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    current = stage_dir / "candidate_after.dxf"
-    stages.append(
-        iterative_explode_reference_clean(
-            source=stages[-1]["out_path"],
-            reference=Path(args.cleanup_reference),
-            out=current,
-            stage_dir=stage_dir,
-            manifest_path=stage_dir / "manifest.json",
-            max_passes=int(args.max_reference_explode_passes),
-            reference_tolerance=float(args.reference_tolerance),
-            dedupe_mode=str(args.dedupe_mode),
-            dedupe_signature_scope=str(args.dedupe_signature_scope),
-            exact_tolerance=float(args.exact_tolerance),
-            near_tolerance=float(args.near_tolerance),
+        stage_dir = out_dir / "011_remove_reference_absent_unreachable_blocks"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            remove_reference_absent_unreachable_blocks(
+                source=stage_input,
+                reference=Path(args.cleanup_reference),
+                out=current,
+                report_path=stage_dir / "removed_blocks.json",
+                manifest_path=stage_dir / "manifest.json",
+            )
         )
-    )
+
+        stage_dir = out_dir / "012_reference_guided_block_content_prune"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            reference_guided_block_content_prune(
+                source=stage_input,
+                reference=Path(args.cleanup_reference),
+                out=current,
+                report_path=stage_dir / "block_content_prune_report.json",
+                manifest_path=stage_dir / "manifest.json",
+                tolerance=float(args.reference_tolerance),
+            )
+        )
+
+        stage_dir = out_dir / "013_remove_reference_absent_unreachable_blocks"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            remove_reference_absent_unreachable_blocks(
+                source=stage_input,
+                reference=Path(args.cleanup_reference),
+                out=current,
+                report_path=stage_dir / "removed_blocks.json",
+                manifest_path=stage_dir / "manifest.json",
+            )
+        )
+
+        stage_dir = out_dir / "014_iterative_explode_reference_clean"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+        current = stage_dir / "candidate_after.dxf"
+        stages.append(
+            iterative_explode_reference_clean(
+                source=stage_input,
+                reference=Path(args.cleanup_reference),
+                out=current,
+                stage_dir=stage_dir,
+                manifest_path=stage_dir / "manifest.json",
+                max_passes=int(args.max_reference_explode_passes),
+                reference_tolerance=float(args.reference_tolerance),
+                dedupe_mode=str(args.dedupe_mode),
+                dedupe_signature_scope=str(args.dedupe_signature_scope),
+                exact_tolerance=float(args.exact_tolerance),
+                near_tolerance=float(args.near_tolerance),
+                layer_policy=layer_policy,
+            )
+        )
+
+        if not bool(getattr(args, "skip_xref_cleanup", False)):
+            stage_dir = out_dir / "015_remove_external_references"
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            stage_input = copy_stage_input(stages[-1]["out_path"], stage_dir)
+            current = stage_dir / "candidate_after.dxf"
+            stages.append(
+                remove_external_references(
+                    source=stage_input,
+                    out=current,
+                    report_path=stage_dir / "external_references_report.json",
+                    manifest_path=stage_dir / "manifest.json",
+                )
+            )
 
     final_path = out_dir / str(args.final_name)
     shutil.copy2(current, final_path)
@@ -439,14 +610,19 @@ def run_l2_room_dxf_preclean(args: argparse.Namespace) -> int:
         "out_dir": str(out_dir),
         "final": str(final_path),
         "final_load_ok": can_load(final_path),
+        "post_009_cleanup_mode": post_009_cleanup_mode,
+        "final_layer_policy_json": str(final_layer_policy_json) if final_layer_policy_json else None,
         "stages": [public_stage_summary(stage) for stage in stages],
         "notes": [
-            "This flow replays the automated part validated in steps 009-014.",
+            "Stages 001-009 replay the validated L2 precleaning chain from the source DXF.",
             "The final stage applies the AutoCAD-validated paper-space cleanup rule: retain one empty layout and preserve modelspace.",
             "All layers are enabled and thawed before the validated L2 near-geometry linework dedupe rule is applied.",
-            "The final modelspace is pruned by layer/type/entity signatures derived from the manually validated step014 reference.",
+            "The default post-009 cleanup is the manually validated preserve-door flow: unlock layers, remove non-door HATCH entities, and dedupe non-door linework.",
+            "Door protection is based on case-insensitive 'door' in layer names, block space names, INSERT block names, or text.",
+            "When --final-layer-policy-json is set, the final stage removes frozen/non-plottable/absent policy layers while preserving wall, door, and finish layers.",
+            "Use --post-009-cleanup-mode reference-guided only to replay the older reference-prune chain.",
+            "When --layer-policy-json is set, every explode step deletes layers absent from the policy, hidden, frozen, or non-plottable.",
             "The preceding AutoCAD-only work is the largest-two-block explode that produced the default source.",
-            "AutoCAD manual edits after step 014 are intentionally documented, not replayed here.",
         ],
     }
     manifest_path = out_dir / "run_manifest.json"
@@ -698,6 +874,474 @@ def enable_all_layers(source: Path, out: Path, manifest_path: Path) -> dict[str,
             "protected_keys": list(protected_keys),
         },
         "failed": not output_load_ok or protection_status != "passed",
+        "before": before,
+        "after": after,
+        "before_modelspace": before_modelspace,
+        "after_modelspace": after_modelspace,
+    }
+    write_manifest(manifest_path, manifest)
+    return manifest
+
+
+def unlock_all_layers_preserve_door(source: Path, out: Path, manifest_path: Path) -> dict[str, Any]:
+    """Unlock every layer while checking that door-related entities survive unchanged."""
+
+    doc = load_dxf(source)
+    before = inspect_door_cleanup_doc(doc, source)
+    protected_before = collect_door_protected_handles(doc)
+    unlocked: list[str] = []
+    for layer in doc.layers:
+        if layer.is_locked():
+            unlocked.append(str(layer.dxf.name))
+            layer.unlock()
+
+    save_doc_for_door_cleanup(doc, out)
+    manifest = build_door_cleanup_manifest(
+        stage="unlock_all_layers_preserve_door",
+        source=source,
+        out=out,
+        before=before,
+        protected_before=protected_before,
+        operation={
+            "removed_count": 0,
+            "unlocked_layer_count": len(unlocked),
+            "unlocked_layers": unlocked,
+        },
+    )
+    write_manifest(manifest_path, manifest)
+    return manifest
+
+
+def remove_hatches_preserve_door(source: Path, out: Path, manifest_path: Path) -> dict[str, Any]:
+    """Remove HATCH entities except those protected by the door heuristic."""
+
+    doc = load_dxf(source)
+    before = inspect_door_cleanup_doc(doc, source)
+    protected_before = collect_door_protected_handles(doc)
+    removed_by_space: Counter[str] = Counter()
+    removed_by_layer: Counter[str] = Counter()
+    removed_samples: list[dict[str, Any]] = []
+    skipped_door_hatch_count = 0
+    skipped_door_hatches: list[dict[str, Any]] = []
+
+    for space_label, space in iter_cleanup_entity_spaces(doc):
+        for entity in list(space):
+            if not is_live_entity(entity) or entity.dxftype() != "HATCH":
+                continue
+            if is_door_protected_entity(entity, space_label):
+                skipped_door_hatch_count += 1
+                if len(skipped_door_hatches) < 100:
+                    skipped_door_hatches.append(entity_summary(entity, space_label))
+                continue
+            layer = str(getattr(entity.dxf, "layer", ""))
+            if len(removed_samples) < 1000:
+                removed_samples.append(entity_summary(entity, space_label))
+            removed_by_space[space_label] += 1
+            removed_by_layer[layer] += 1
+            entity.destroy()
+        purge_space(space)
+
+    save_doc_for_door_cleanup(doc, out)
+    manifest = build_door_cleanup_manifest(
+        stage="remove_hatches_preserve_door",
+        source=source,
+        out=out,
+        before=before,
+        protected_before=protected_before,
+        operation={
+            "removed_count": sum(removed_by_space.values()),
+            "removed_by_space": dict(removed_by_space.most_common()),
+            "removed_by_layer": dict(removed_by_layer.most_common()),
+            "removed_samples": removed_samples,
+            "skipped_door_hatch_count": skipped_door_hatch_count,
+            "skipped_door_hatches": skipped_door_hatches,
+        },
+    )
+    write_manifest(manifest_path, manifest)
+    return manifest
+
+
+def dedupe_linework_preserve_door(
+    source: Path,
+    out: Path,
+    manifest_path: Path,
+    mode: str = DEFAULT_DEDUPE_MODE,
+    signature_scope: str = DEFAULT_DEDUPE_SIGNATURE_SCOPE,
+    exact_tolerance: float = DEFAULT_EXACT_TOLERANCE,
+    near_tolerance: float = DEFAULT_NEAR_TOLERANCE,
+) -> dict[str, Any]:
+    """Remove duplicate line-like entities per space, skipping door-protected entities."""
+
+    if mode not in {"exact", "near"}:
+        raise ValueError(f"Unsupported dedupe mode: {mode}")
+    doc = load_dxf(source)
+    before = inspect_door_cleanup_doc(doc, source)
+    protected_before = collect_door_protected_handles(doc)
+    tolerance = exact_tolerance if mode == "exact" else near_tolerance
+    removed_by_space: Counter[str] = Counter()
+    removed_by_layer: Counter[str] = Counter()
+    removed_by_type: Counter[str] = Counter()
+    removed_samples: list[dict[str, Any]] = []
+    scanned_linework_count = 0
+    skipped_door_linework_count = 0
+    skipped_error_count = 0
+
+    for space_label, space in iter_cleanup_entity_spaces(doc):
+        seen: set[tuple[Any, ...]] = set()
+        for entity in list(space):
+            if not is_live_entity(entity) or entity.dxftype() not in LINEAR_ENTITY_TYPES:
+                continue
+            scanned_linework_count += 1
+            if is_door_protected_entity(entity, space_label):
+                skipped_door_linework_count += 1
+                continue
+            try:
+                signature = entity_signature(entity, tolerance=tolerance, scope=signature_scope)
+            except Exception:
+                skipped_error_count += 1
+                continue
+            key = (space_label, *signature)
+            if key not in seen:
+                seen.add(key)
+                continue
+            layer = str(getattr(entity.dxf, "layer", ""))
+            if len(removed_samples) < 1000:
+                removed_samples.append(entity_summary(entity, space_label))
+            removed_by_space[space_label] += 1
+            removed_by_layer[layer] += 1
+            removed_by_type[entity.dxftype()] += 1
+            entity.destroy()
+        purge_space(space)
+
+    save_doc_for_door_cleanup(doc, out)
+    manifest = build_door_cleanup_manifest(
+        stage="dedupe_linework_preserve_door",
+        source=source,
+        out=out,
+        before=before,
+        protected_before=protected_before,
+        operation={
+            "dedupe_mode": mode,
+            "signature_scope": signature_scope,
+            "exact_tolerance": exact_tolerance,
+            "near_tolerance": near_tolerance,
+            "scanned_linework_count": scanned_linework_count,
+            "skipped_door_linework_count": skipped_door_linework_count,
+            "skipped_error_count": skipped_error_count,
+            "removed_count": sum(removed_by_space.values()),
+            "removed_by_space": dict(removed_by_space.most_common()),
+            "removed_by_layer": dict(removed_by_layer.most_common()),
+            "removed_by_type": dict(removed_by_type.most_common()),
+            "removed_samples": removed_samples,
+        },
+    )
+    write_manifest(manifest_path, manifest)
+    return manifest
+
+
+def apply_layer_policy_preserve_walls_doors(
+    source: Path,
+    out: Path,
+    manifest_path: Path,
+    layer_policy: dict[str, Any],
+    layer_policy_json: Path | None = None,
+) -> dict[str, Any]:
+    """Apply final layer cleanup while preserving wall/door/finish layers.
+
+    The source layer JSON may mark some geometry-critical wall layers as frozen
+    or non-plottable. This stage removes auxiliary frozen/non-plottable layers
+    while keeping those wall/door/finish layers as explicit exceptions.
+    """
+
+    doc = load_dxf(source)
+    strict_target_layers = collect_disallowed_layers(doc, layer_policy)
+    preserve_override_layers = {
+        name for name in strict_target_layers if should_preserve_wall_door_layer(name, layer_policy)
+    }
+    target_layers = strict_target_layers - preserve_override_layers
+    strict_before = inspect_disallowed_layers(doc, strict_target_layers)
+    before = inspect_disallowed_layers(doc, target_layers)
+
+    removed_entities: list[dict[str, str]] = []
+    removed_by_space: Counter[str] = Counter()
+    removed_by_layer: Counter[str] = Counter()
+    removed_by_type: Counter[str] = Counter()
+    destroyed_handles: set[str] = set()
+
+    for space_label, space in iter_cleanup_entity_spaces(doc):
+        for entity in list(space):
+            if not is_live_entity(entity):
+                continue
+            layer = str(getattr(entity.dxf, "layer", ""))
+            if layer not in target_layers:
+                continue
+            handle = str(getattr(entity.dxf, "handle", ""))
+            if handle and handle in destroyed_handles:
+                continue
+            if len(removed_entities) < 1000:
+                removed_entities.append(
+                    {
+                        "space": space_label,
+                        "handle": handle,
+                        "type": entity.dxftype(),
+                        "layer": layer,
+                    }
+                )
+            removed_by_space[space_label] += 1
+            removed_by_layer[layer] += 1
+            removed_by_type[entity.dxftype()] += 1
+            entity.destroy()
+            if handle:
+                destroyed_handles.add(handle)
+        purge_space(space)
+
+    doc.entitydb.purge()
+    try:
+        doc.objects.purge()
+    except Exception:
+        pass
+
+    deleted_layer_records: list[str] = []
+    failed_layer_records: list[dict[str, str]] = []
+    for name in sorted(target_layers):
+        if not doc.layers.has_entry(name):
+            continue
+        try:
+            layer = doc.layers.get(name)
+            if layer.is_locked():
+                layer.unlock()
+            doc.layers.remove(name)
+            deleted_layer_records.append(name)
+        except Exception as exc:
+            failed_layer_records.append({"layer": name, "error": f"{type(exc).__name__}: {exc}"})
+
+    doc.entitydb.purge()
+    try:
+        doc.objects.purge()
+    except Exception:
+        pass
+    out.parent.mkdir(parents=True, exist_ok=True)
+    doc.saveas(out)
+
+    output_load_ok = False
+    output_error = None
+    after = None
+    strict_after = None
+    try:
+        after_doc = load_dxf(out)
+        after_target_layers = collect_disallowed_layers(after_doc, layer_policy) - preserve_override_layers
+        strict_after_target_layers = collect_disallowed_layers(after_doc, layer_policy)
+        after = inspect_disallowed_layers(after_doc, after_target_layers)
+        strict_after = inspect_disallowed_layers(after_doc, strict_after_target_layers)
+        output_load_ok = True
+    except Exception as exc:  # pragma: no cover - defensive manifest field
+        output_error = f"{type(exc).__name__}: {exc}"
+
+    protection_status = (
+        "passed"
+        if output_load_ok
+        and not failed_layer_records
+        and after is not None
+        and after["remaining_entity_count"] == 0
+        else "failed"
+    )
+    manifest = {
+        "stage": "apply_layer_policy_preserve_walls_doors",
+        "source": str(source),
+        "out": str(out),
+        "out_path": out,
+        "layer_policy_json": str(layer_policy_json) if layer_policy_json is not None else None,
+        "policy_rule_count": len(layer_policy["rules"]),
+        "allowed_layer_count": len(layer_policy["allowed_layers"]),
+        "strict_target_layer_count_before": len(strict_target_layers),
+        "strict_target_entity_count_before": strict_before["remaining_entity_count"],
+        "preserve_override_layer_count": len(preserve_override_layers),
+        "preserve_override_layers": sorted(preserve_override_layers),
+        "target_layer_count": len(target_layers),
+        "target_layer_reasons": dict(count_target_layer_reasons(target_layers, layer_policy)),
+        "removed_count": sum(removed_by_space.values()),
+        "removed_entity_count": sum(removed_by_space.values()),
+        "removed_layer_record_count": len(deleted_layer_records),
+        "deleted_layer_records": deleted_layer_records,
+        "failed_layer_records": failed_layer_records,
+        "removed_by_space": dict(removed_by_space.most_common()),
+        "removed_by_layer": dict(removed_by_layer.most_common()),
+        "removed_by_type": dict(removed_by_type.most_common()),
+        "removed_entities": removed_entities,
+        "file_size_before": source.stat().st_size,
+        "file_size_after": out.stat().st_size if out.exists() else None,
+        "output_load_ok": output_load_ok,
+        "output_error": output_error,
+        "before": before,
+        "strict_before": strict_before,
+        "after": after,
+        "strict_after": strict_after,
+        "protection": {
+            "status": protection_status,
+            "remaining_entity_count_after_exceptions": (after or {}).get("remaining_entity_count"),
+            "remaining_layer_record_count_after_exceptions": (after or {}).get("remaining_layer_record_count"),
+            "strict_remaining_entity_count_after": (strict_after or {}).get("remaining_entity_count"),
+        },
+        "failed": protection_status != "passed",
+    }
+    write_manifest(manifest_path, manifest)
+    return manifest
+
+
+def remove_external_references(
+    source: Path,
+    out: Path,
+    report_path: Path,
+    manifest_path: Path,
+) -> dict[str, Any]:
+    """Remove bound/external reference layer content and unreachable xref blocks."""
+
+    doc = load_dxf(source)
+    before = inspect_doc(doc, source)
+    before_modelspace = modelspace_inventory(doc)
+    target_layers = {str(layer.dxf.name) for layer in doc.layers if is_external_reference_name(str(layer.dxf.name))}
+    target_blocks = {
+        str(block.name)
+        for block in doc.blocks
+        if is_external_reference_name(str(block.name))
+        and not is_layout_block_name(str(block.name))
+        and not is_anonymous_block_name(str(block.name))
+    }
+    removed_entities: list[dict[str, str]] = []
+    removed_by_space: Counter[str] = Counter()
+    removed_by_layer: Counter[str] = Counter()
+    removed_by_type: Counter[str] = Counter()
+    destroyed_handles: set[str] = set()
+
+    for space_label, space in iter_cleanup_entity_spaces(doc):
+        for entity in list(space):
+            if not getattr(entity, "is_alive", True):
+                continue
+            layer = str(getattr(entity.dxf, "layer", ""))
+            block_name = str(getattr(entity.dxf, "name", "")) if entity.dxftype() == "INSERT" else ""
+            if layer not in target_layers and block_name not in target_blocks:
+                continue
+            handle = str(getattr(entity.dxf, "handle", ""))
+            if handle and handle in destroyed_handles:
+                continue
+            if len(removed_entities) < 1000:
+                removed_entities.append(
+                    {
+                        "space": space_label,
+                        "handle": handle,
+                        "type": entity.dxftype(),
+                        "layer": layer,
+                        "block_name": block_name,
+                    }
+                )
+            removed_by_space[space_label] += 1
+            removed_by_layer[layer] += 1
+            removed_by_type[entity.dxftype()] += 1
+            entity.destroy()
+            if handle:
+                destroyed_handles.add(handle)
+        purge_space(space)
+
+    doc.entitydb.purge()
+    reachable = collect_reachable_blocks(doc)
+    deleted_blocks: list[dict[str, Any]] = []
+    failed_blocks: list[dict[str, str]] = []
+    for name in sorted(target_blocks):
+        if name in reachable:
+            continue
+        try:
+            block = doc.blocks.get(name)
+            deleted_blocks.append({"name": name, "entity_count": len(block)})
+            doc.blocks.delete_block(name, safe=False)
+        except KeyError:
+            continue
+        except Exception as exc:
+            failed_blocks.append({"name": name, "error": f"{type(exc).__name__}: {exc}"})
+
+    doc.entitydb.purge()
+    deleted_layers: list[str] = []
+    failed_layers: list[dict[str, str]] = []
+    for name in sorted(target_layers):
+        if not doc.layers.has_entry(name):
+            continue
+        try:
+            doc.layers.remove(name)
+            deleted_layers.append(name)
+        except Exception as exc:
+            failed_layers.append({"name": name, "error": f"{type(exc).__name__}: {exc}"})
+
+    doc.entitydb.purge()
+    doc.objects.purge()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    doc.saveas(out)
+
+    output_load_ok = False
+    output_error = None
+    after = None
+    after_modelspace = None
+    remaining = None
+    try:
+        after_doc = load_dxf(out)
+        after = inspect_doc(after_doc, out)
+        after_modelspace = modelspace_inventory(after_doc)
+        remaining = inspect_external_reference_residue(after_doc)
+        output_load_ok = True
+    except Exception as exc:  # pragma: no cover - defensive manifest field
+        output_error = f"{type(exc).__name__}: {exc}"
+
+    modelspace_changed_by_removed_count = before_modelspace["entity_count"] - (
+        after_modelspace["entity_count"] if after_modelspace else before_modelspace["entity_count"]
+    )
+    failed = bool(
+        not output_load_ok
+        or failed_layers
+        or failed_blocks
+        or (remaining and remaining["entity_count"] != 0)
+        or (remaining and remaining["layer_count"] != 0)
+    )
+    report = {
+        "source": str(source),
+        "out": str(out),
+        "target_layer_count": len(target_layers),
+        "target_block_count": len(target_blocks),
+        "removed_entity_count": sum(removed_by_space.values()),
+        "removed_entity_sample": removed_entities,
+        "removed_by_space": dict(removed_by_space.most_common()),
+        "removed_by_layer": dict(removed_by_layer.most_common()),
+        "removed_by_type": dict(removed_by_type.most_common()),
+        "removed_layer_record_count": len(deleted_layers),
+        "removed_layer_records": deleted_layers,
+        "failed_layer_records": failed_layers,
+        "removed_block_count": len(deleted_blocks),
+        "removed_blocks": deleted_blocks,
+        "failed_blocks": failed_blocks,
+        "remaining": remaining,
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    manifest = {
+        "stage": "remove_external_references",
+        "source": str(source),
+        "out": str(out),
+        "out_path": out,
+        "report": str(report_path),
+        "removed_count": sum(removed_by_space.values()) + len(deleted_layers) + len(deleted_blocks),
+        "removed_entity_count": sum(removed_by_space.values()),
+        "removed_layer_record_count": len(deleted_layers),
+        "removed_block_count": len(deleted_blocks),
+        "target_layer_count": len(target_layers),
+        "target_block_count": len(target_blocks),
+        "file_size_before": source.stat().st_size,
+        "file_size_after": out.stat().st_size if out.exists() else None,
+        "output_load_ok": output_load_ok,
+        "output_error": output_error,
+        "protection": {
+            "status": "passed" if not failed else "failed",
+            "modelspace_entity_delta": modelspace_changed_by_removed_count,
+            "remaining_external_reference_entity_count": (remaining or {}).get("entity_count"),
+            "remaining_external_reference_layer_count": (remaining or {}).get("layer_count"),
+        },
+        "failed": failed,
         "before": before,
         "after": after,
         "before_modelspace": before_modelspace,
@@ -1201,6 +1845,49 @@ def is_anonymous_block_name(name: str) -> bool:
     return name.startswith("*")
 
 
+def is_external_reference_name(name: str) -> bool:
+    upper = name.upper()
+    return "$0$" in upper or "XREF" in upper
+
+
+def inspect_external_reference_residue(doc: Any) -> dict[str, Any]:
+    layers = sorted(str(layer.dxf.name) for layer in doc.layers if is_external_reference_name(str(layer.dxf.name)))
+    blocks = sorted(
+        str(block.name)
+        for block in doc.blocks
+        if is_external_reference_name(str(block.name))
+        and not is_layout_block_name(str(block.name))
+        and not is_anonymous_block_name(str(block.name))
+    )
+    entity_count = 0
+    entity_by_layer: Counter[str] = Counter()
+    entity_by_type: Counter[str] = Counter()
+    insert_by_block: Counter[str] = Counter()
+    layer_set = set(layers)
+    block_set = set(blocks)
+    for _, space in iter_cleanup_entity_spaces(doc):
+        for entity in space:
+            layer = str(getattr(entity.dxf, "layer", ""))
+            name = str(getattr(entity.dxf, "name", "")) if entity.dxftype() == "INSERT" else ""
+            if layer not in layer_set and name not in block_set:
+                continue
+            entity_count += 1
+            entity_by_layer[layer] += 1
+            entity_by_type[entity.dxftype()] += 1
+            if name:
+                insert_by_block[name] += 1
+    return {
+        "layer_count": len(layers),
+        "layers": layers,
+        "block_count": len(blocks),
+        "blocks": blocks,
+        "entity_count": entity_count,
+        "entity_by_layer": dict(entity_by_layer.most_common()),
+        "entity_by_type": dict(entity_by_type.most_common()),
+        "insert_by_block": dict(insert_by_block.most_common()),
+    }
+
+
 def iterative_explode_reference_clean(
     source: Path,
     reference: Path,
@@ -1213,6 +1900,7 @@ def iterative_explode_reference_clean(
     dedupe_signature_scope: str = DEFAULT_DEDUPE_SIGNATURE_SCOPE,
     exact_tolerance: float = DEFAULT_EXACT_TOLERANCE,
     near_tolerance: float = DEFAULT_NEAR_TOLERANCE,
+    layer_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Explode current/reference one level at a time, then prune and dedupe."""
 
@@ -1275,6 +1963,7 @@ def iterative_explode_reference_clean(
             source=current_source,
             out=exploded_source,
             manifest_path=pass_dir / "current_explode_manifest.json",
+            layer_policy=layer_policy,
         )
         reference_explode = explode_modelspace_one_level(
             source=current_reference,
@@ -1347,6 +2036,7 @@ def iterative_explode_reference_clean(
         "protection": {
             "status": "passed" if not failed else "failed",
             "synchronized_reference_explode": True,
+            "layer_policy_applied_to_current_after_explode": layer_policy is not None,
         },
         "passes": passes,
         "failed": failed,
@@ -1373,6 +2063,12 @@ def iterative_pass_summary(
         "current_insert_count_before": source_explode["insert_count_before"],
         "current_exploded_count": source_explode["exploded_count"],
         "current_explode_error_count": len(source_explode["explode_errors"]),
+        "current_layer_policy_removed_entity_count": (
+            source_explode.get("layer_policy_cleanup") or {}
+        ).get("removed_entity_count"),
+        "current_layer_policy_removed_layer_record_count": (
+            source_explode.get("layer_policy_cleanup") or {}
+        ).get("removed_layer_record_count"),
         "reference_insert_count_before": reference_explode["insert_count_before"],
         "reference_exploded_count": reference_explode["exploded_count"],
         "reference_explode_error_count": len(reference_explode["explode_errors"]),
@@ -1387,7 +2083,190 @@ def read_json_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def explode_modelspace_one_level(source: Path, out: Path, manifest_path: Path) -> dict[str, Any]:
+def load_layer_policy_json(path: Path) -> dict[str, Any]:
+    payload = read_json_file(path)
+    layer_rules: dict[str, dict[str, Any]] = {}
+    allowed_layers: set[str] = set()
+    for item in payload.get("图层", []):
+        name = str(item.get("图层名称", ""))
+        if not name:
+            continue
+        visible = bool(item.get("显示"))
+        frozen = bool(item.get("冻结"))
+        plottable = bool(item.get("打印", True))
+        rule = {
+            "name": name,
+            "visible": visible,
+            "frozen": frozen,
+            "plottable": plottable,
+            "locked": bool(item.get("锁定")),
+            "allowed": bool(visible and not frozen and plottable),
+        }
+        layer_rules[name] = rule
+        if rule["allowed"]:
+            allowed_layers.add(name)
+    return {
+        "path": str(path),
+        "drawing_name": payload.get("图纸名称"),
+        "layer_count": len(layer_rules),
+        "allowed_layer_count": len(allowed_layers),
+        "excluded_layer_count": len(layer_rules) - len(allowed_layers),
+        "rules": layer_rules,
+        "allowed_layers": allowed_layers,
+    }
+
+
+def apply_layer_policy_cleanup(doc: Any, layer_policy: dict[str, Any]) -> dict[str, Any]:
+    target_layers = collect_disallowed_layers(doc, layer_policy)
+    before = inspect_disallowed_layers(doc, target_layers)
+    removed_entities: list[dict[str, str]] = []
+    removed_by_space: Counter[str] = Counter()
+    removed_by_layer: Counter[str] = Counter()
+    removed_by_type: Counter[str] = Counter()
+    destroyed_handles: set[str] = set()
+
+    for space_label, space in iter_cleanup_entity_spaces(doc):
+        for entity in list(space):
+            if not getattr(entity, "is_alive", True):
+                continue
+            layer = str(getattr(entity.dxf, "layer", ""))
+            if layer not in target_layers:
+                continue
+            handle = str(getattr(entity.dxf, "handle", ""))
+            if handle and handle in destroyed_handles:
+                continue
+            if len(removed_entities) < 1000:
+                removed_entities.append(
+                    {
+                        "space": space_label,
+                        "handle": handle,
+                        "type": entity.dxftype(),
+                        "layer": layer,
+                    }
+                )
+            removed_by_space[space_label] += 1
+            removed_by_layer[layer] += 1
+            removed_by_type[entity.dxftype()] += 1
+            entity.destroy()
+            if handle:
+                destroyed_handles.add(handle)
+        purge_space(space)
+
+    doc.entitydb.purge()
+    deleted_layer_records: list[str] = []
+    failed_layer_records: list[dict[str, str]] = []
+    for name in sorted(target_layers):
+        if not doc.layers.has_entry(name):
+            continue
+        try:
+            doc.layers.remove(name)
+            deleted_layer_records.append(name)
+        except Exception as exc:
+            failed_layer_records.append({"layer": name, "error": f"{type(exc).__name__}: {exc}"})
+
+    doc.entitydb.purge()
+    doc.objects.purge()
+    after = inspect_disallowed_layers(doc, target_layers)
+    failed = bool(
+        failed_layer_records
+        or after["remaining_entity_count"] != 0
+        or after["remaining_layer_record_count"] != 0
+    )
+    return {
+        "policy_path": layer_policy.get("path"),
+        "policy_layer_count": layer_policy.get("layer_count"),
+        "allowed_layer_count": layer_policy.get("allowed_layer_count"),
+        "target_layer_count": len(target_layers),
+        "target_reason_counts": dict(count_target_layer_reasons(target_layers, layer_policy).most_common()),
+        "removed_entity_count": sum(removed_by_space.values()),
+        "removed_entity_sample": removed_entities,
+        "removed_by_space": dict(removed_by_space.most_common()),
+        "removed_by_layer": dict(removed_by_layer.most_common()),
+        "removed_by_type": dict(removed_by_type.most_common()),
+        "removed_layer_record_count": len(deleted_layer_records),
+        "removed_layer_records": deleted_layer_records,
+        "failed_layer_records": failed_layer_records,
+        "before": before,
+        "after": after,
+        "failed": failed,
+    }
+
+
+def collect_disallowed_layers(doc: Any, layer_policy: dict[str, Any]) -> set[str]:
+    present_layers = {str(layer.dxf.name) for layer in doc.layers}
+    for _, space in iter_cleanup_entity_spaces(doc):
+        for entity in space:
+            present_layers.add(str(getattr(entity.dxf, "layer", "")))
+    allowed_layers = layer_policy["allowed_layers"]
+    return {name for name in present_layers if name and name not in allowed_layers}
+
+
+def count_target_layer_reasons(target_layers: set[str], layer_policy: dict[str, Any]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for name in target_layers:
+        for reason in disallowed_layer_reasons(name, layer_policy):
+            counts[reason] += 1
+    return counts
+
+
+def disallowed_layer_reasons(name: str, layer_policy: dict[str, Any]) -> list[str]:
+    rule = layer_policy["rules"].get(name)
+    if rule is None:
+        return ["absent_from_policy"]
+    reasons: list[str] = []
+    if not rule["visible"]:
+        reasons.append("hidden_in_policy")
+    if rule["frozen"]:
+        reasons.append("frozen_in_policy")
+    if not rule["plottable"]:
+        reasons.append("non_plottable_in_policy")
+    return reasons or ["allowed_in_policy"]
+
+
+def inspect_disallowed_layers(doc: Any, target_layers: set[str]) -> dict[str, Any]:
+    entity_counts_by_space: dict[str, dict[str, int]] = {}
+    entity_counts_by_layer: Counter[str] = Counter()
+    entity_counts_by_type: Counter[str] = Counter()
+    for space_label, space in iter_cleanup_entity_spaces(doc):
+        counts: Counter[str] = Counter()
+        for entity in space:
+            layer = str(getattr(entity.dxf, "layer", ""))
+            if layer not in target_layers:
+                continue
+            counts[layer] += 1
+            entity_counts_by_layer[layer] += 1
+            entity_counts_by_type[entity.dxftype()] += 1
+        if counts:
+            entity_counts_by_space[space_label] = dict(counts.most_common())
+    remaining_layer_records = sorted(name for name in target_layers if doc.layers.has_entry(name))
+    return {
+        "remaining_entity_count": sum(entity_counts_by_layer.values()),
+        "remaining_layer_record_count": len(remaining_layer_records),
+        "remaining_layer_records": remaining_layer_records,
+        "entity_counts_by_space": entity_counts_by_space,
+        "entity_counts_by_layer": dict(entity_counts_by_layer.most_common()),
+        "entity_counts_by_type": dict(entity_counts_by_type.most_common()),
+    }
+
+
+def iter_cleanup_entity_spaces(doc: Any) -> Iterable[tuple[str, Any]]:
+    yield "modelspace", doc.modelspace()
+    for layout in doc.layouts:
+        if str(layout.name).lower() != "model":
+            yield f"layout:{layout.name}", layout
+    for block in doc.blocks:
+        name = str(block.name)
+        if is_layout_block_name(name):
+            continue
+        yield f"block:{name}", block
+
+
+def explode_modelspace_one_level(
+    source: Path,
+    out: Path,
+    manifest_path: Path,
+    layer_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Explode exactly the INSERT entities present at the start of one pass."""
 
     doc = load_dxf(source)
@@ -1413,6 +2292,7 @@ def explode_modelspace_one_level(source: Path, out: Path, manifest_path: Path) -
             errors.append({"handle": handle, "name": name, "error": f"{type(exc).__name__}: {exc}"})
     purge_space(msp)
     doc.entitydb.purge()
+    layer_policy_cleanup = apply_layer_policy_cleanup(doc, layer_policy) if layer_policy is not None else None
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.saveas(out)
     output_load_ok = False
@@ -1424,6 +2304,7 @@ def explode_modelspace_one_level(source: Path, out: Path, manifest_path: Path) -
         output_load_ok = True
     except Exception as exc:  # pragma: no cover - defensive manifest field
         output_error = f"{type(exc).__name__}: {exc}"
+    failed = bool(not output_load_ok or (layer_policy_cleanup and layer_policy_cleanup["failed"]))
     manifest = {
         "stage": "explode_modelspace_one_level",
         "source": str(source),
@@ -1438,7 +2319,8 @@ def explode_modelspace_one_level(source: Path, out: Path, manifest_path: Path) -
         "file_size_after": out.stat().st_size if out.exists() else None,
         "output_load_ok": output_load_ok,
         "output_error": output_error,
-        "failed": not output_load_ok,
+        "layer_policy_cleanup": layer_policy_cleanup,
+        "failed": failed,
     }
     write_manifest(manifest_path, manifest)
     return manifest
@@ -1450,6 +2332,7 @@ def explode_insert_handles(
     handles: list[str],
     manifest_path: Path,
     allow_missing: bool = False,
+    layer_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     doc = load_dxf(source)
     before = inspect_doc(doc, source, target_handles=handles)
@@ -1481,6 +2364,7 @@ def explode_insert_handles(
         )
     purge_space(msp)
     doc.entitydb.purge()
+    layer_policy_cleanup = apply_layer_policy_cleanup(doc, layer_policy) if layer_policy is not None else None
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.saveas(out)
     output_load_ok = False
@@ -1492,7 +2376,11 @@ def explode_insert_handles(
         output_load_ok = True
     except Exception as exc:  # pragma: no cover - defensive manifest field
         output_error = f"{type(exc).__name__}: {exc}"
-    failed = bool(wrong_type or (missing and not allow_missing) or not output_load_ok)
+    failed = bool(
+        ((wrong_type or missing) and not allow_missing)
+        or not output_load_ok
+        or (layer_policy_cleanup and layer_policy_cleanup["failed"])
+    )
     manifest = {
         "stage": "explode_insert_handles",
         "source": str(source),
@@ -1504,6 +2392,7 @@ def explode_insert_handles(
         "exploded": exploded,
         "missing": missing,
         "wrong_type": wrong_type,
+        "layer_policy_cleanup": layer_policy_cleanup,
         "file_size_before": source.stat().st_size,
         "file_size_after": out.stat().st_size if out.exists() else None,
         "output_load_ok": output_load_ok,
@@ -1607,6 +2496,173 @@ def inspect_doc(doc: Any, path: Path, target_handles: Iterable[str] | None = Non
         "room_text": inspect_room_text(msp),
         "target_entities": targets,
     }
+
+
+def inspect_door_cleanup_doc(doc: Any, path: Path) -> dict[str, Any]:
+    entity_types: Counter[str] = Counter()
+    layer_counts: Counter[str] = Counter()
+    locked_layers: list[str] = []
+    door_layers: list[str] = []
+    hatch_count = 0
+    linework_count = 0
+    for layer in doc.layers:
+        name = str(layer.dxf.name)
+        if layer.is_locked():
+            locked_layers.append(name)
+        if contains_door_token(name):
+            door_layers.append(name)
+    for _, space in iter_cleanup_entity_spaces(doc):
+        for entity in space:
+            if not is_live_entity(entity):
+                continue
+            entity_type = entity.dxftype()
+            entity_types[entity_type] += 1
+            layer_counts[str(getattr(entity.dxf, "layer", ""))] += 1
+            if entity_type == "HATCH":
+                hatch_count += 1
+            if entity_type in LINEAR_ENTITY_TYPES:
+                linework_count += 1
+    return {
+        "file_size": path.stat().st_size if path.exists() else None,
+        "layer_count": len(doc.layers),
+        "layout_count": len(doc.layouts),
+        "block_count": len(doc.blocks),
+        "locked_layer_count": len(locked_layers),
+        "locked_layers_sample": sorted(locked_layers)[:100],
+        "door_layer_count": len(door_layers),
+        "door_layers": sorted(door_layers),
+        "hatch_count": hatch_count,
+        "linework_count": linework_count,
+        "entity_type_counts_top": dict(entity_types.most_common(30)),
+        "layer_counts_top": dict(layer_counts.most_common(30)),
+    }
+
+
+def collect_door_protected_handles(doc: Any) -> dict[str, Any]:
+    handles: set[str] = set()
+    by_space: Counter[str] = Counter()
+    by_layer: Counter[str] = Counter()
+    by_type: Counter[str] = Counter()
+    for space_label, space in iter_cleanup_entity_spaces(doc):
+        for entity in space:
+            if not is_live_entity(entity) or not is_door_protected_entity(entity, space_label):
+                continue
+            handle = str(getattr(entity.dxf, "handle", ""))
+            if handle:
+                handles.add(handle)
+            by_space[space_label] += 1
+            by_layer[str(getattr(entity.dxf, "layer", ""))] += 1
+            by_type[entity.dxftype()] += 1
+    return {
+        "handles": handles,
+        "summary": {
+            "entity_count": sum(by_space.values()),
+            "handle_count": len(handles),
+            "by_space_top": dict(by_space.most_common(50)),
+            "by_layer_top": dict(by_layer.most_common(50)),
+            "by_type_top": dict(by_type.most_common()),
+        },
+    }
+
+
+def build_door_cleanup_manifest(
+    stage: str,
+    source: Path,
+    out: Path,
+    before: dict[str, Any],
+    protected_before: dict[str, Any],
+    operation: dict[str, Any],
+) -> dict[str, Any]:
+    output_load_ok = False
+    output_error = None
+    after = None
+    door_protection: dict[str, Any]
+    try:
+        after_doc = load_dxf(out)
+        after = inspect_door_cleanup_doc(after_doc, out)
+        protected_after = collect_door_protected_handles(after_doc)
+        missing_handles = sorted(protected_before["handles"] - protected_after["handles"])
+        output_load_ok = True
+        door_protection = {
+            "status": "passed" if not missing_handles else "failed",
+            "before_handle_count": len(protected_before["handles"]),
+            "after_handle_count": len(protected_after["handles"]),
+            "missing_handle_count": len(missing_handles),
+            "missing_handles_sample": missing_handles[:100],
+            "before": protected_before["summary"],
+            "after": protected_after["summary"],
+        }
+    except Exception as exc:  # pragma: no cover - defensive manifest field
+        output_error = f"{type(exc).__name__}: {exc}"
+        door_protection = {
+            "status": "failed",
+            "before_handle_count": len(protected_before["handles"]),
+            "after_handle_count": None,
+            "missing_handle_count": None,
+            "missing_handles_sample": [],
+            "before": protected_before["summary"],
+            "after": None,
+        }
+    manifest = {
+        "stage": stage,
+        "source": str(source),
+        "out": str(out),
+        "out_path": out,
+        "file_size_before": source.stat().st_size,
+        "file_size_after": out.stat().st_size if out.exists() else None,
+        "output_load_ok": output_load_ok,
+        "output_error": output_error,
+        "before": before,
+        "after": after,
+        "protection": door_protection,
+        "door_protection": door_protection,
+        **operation,
+    }
+    manifest["failed"] = bool(not output_load_ok or door_protection["status"] != "passed")
+    return manifest
+
+
+def save_doc_for_door_cleanup(doc: Any, out: Path) -> None:
+    for _, space in iter_cleanup_entity_spaces(doc):
+        purge_space(space)
+    doc.entitydb.purge()
+    try:
+        doc.objects.purge()
+    except Exception:
+        pass
+    out.parent.mkdir(parents=True, exist_ok=True)
+    doc.saveas(out)
+
+
+def is_door_protected_entity(entity: Any, space_label: str) -> bool:
+    if contains_door_token(space_label):
+        return True
+    if contains_door_token(str(getattr(entity.dxf, "layer", ""))):
+        return True
+    if entity.dxftype() == "INSERT" and contains_door_token(str(getattr(entity.dxf, "name", ""))):
+        return True
+    if entity.dxftype() in TEXT_TYPES and contains_door_token(entity_text(entity)):
+        return True
+    return False
+
+
+def should_preserve_wall_door_layer(name: str, layer_policy: dict[str, Any]) -> bool:
+    rule = layer_policy["rules"].get(name)
+    if rule is None or not rule.get("visible", False):
+        return False
+    upper_name = str(name).upper()
+    excluded = any(token.upper() in upper_name for token in WALL_PRESERVE_EXCLUDE_LAYER_TOKENS)
+    if excluded and "DOOR" not in upper_name and "门" not in str(name):
+        return False
+    return any(token.upper() in upper_name for token in WALL_PRESERVE_LAYER_TOKENS)
+
+
+def contains_door_token(value: str) -> bool:
+    return DOOR_PROTECTION_TOKEN in str(value).casefold()
+
+
+def is_live_entity(entity: Any) -> bool:
+    return bool(getattr(entity, "is_alive", True))
 
 
 def modelspace_inventory(doc: Any) -> dict[str, Any]:
@@ -1827,6 +2883,13 @@ def can_load(path: Path) -> bool:
         return False
 
 
+def copy_stage_input(source: Path, stage_dir: Path) -> Path:
+    stage_input = stage_dir / "input.dxf"
+    if source.resolve() != stage_input.resolve():
+        shutil.copy2(source, stage_input)
+    return stage_input
+
+
 def public_stage_summary(stage: dict[str, Any]) -> dict[str, Any]:
     return {
         "stage": stage.get("stage"),
@@ -1846,11 +2909,38 @@ def public_stage_summary(stage: dict[str, Any]) -> dict[str, Any]:
         "removed_reason_counts": stage.get("removed_reason_counts"),
         "removed_block_count": stage.get("removed_block_count"),
         "removed_block_entity_count": stage.get("removed_block_entity_count"),
+        "removed_entity_count": stage.get("removed_entity_count"),
+        "removed_layer_record_count": stage.get("removed_layer_record_count"),
+        "target_layer_count": stage.get("target_layer_count"),
+        "strict_target_layer_count_before": stage.get("strict_target_layer_count_before"),
+        "strict_target_entity_count_before": stage.get("strict_target_entity_count_before"),
+        "preserve_override_layer_count": stage.get("preserve_override_layer_count"),
+        "target_block_count": stage.get("target_block_count"),
         "affected_block_count": stage.get("affected_block_count"),
         "completed_passes": stage.get("completed_passes"),
         "stop_reason": stage.get("stop_reason"),
         "final_insert_count": stage.get("final_insert_count"),
         "protection_status": (stage.get("protection") or {}).get("status"),
+        "door_missing_handle_count": (stage.get("door_protection") or stage.get("protection") or {}).get(
+            "missing_handle_count"
+        ),
+        "door_before_entity_count": (
+            (stage.get("door_protection") or stage.get("protection") or {}).get("before") or {}
+        ).get("entity_count"),
+        "door_after_entity_count": (
+            (stage.get("door_protection") or stage.get("protection") or {}).get("after") or {}
+        ).get("entity_count"),
+        "layer_policy_removed_entity_count": (stage.get("layer_policy_cleanup") or {}).get("removed_entity_count"),
+        "layer_policy_removed_layer_record_count": (stage.get("layer_policy_cleanup") or {}).get(
+            "removed_layer_record_count"
+        ),
+        "layer_policy_target_layer_count": (stage.get("layer_policy_cleanup") or {}).get("target_layer_count"),
+        "remaining_entity_count_after_exceptions": (stage.get("protection") or {}).get(
+            "remaining_entity_count_after_exceptions"
+        ),
+        "strict_remaining_entity_count_after": (stage.get("protection") or {}).get(
+            "strict_remaining_entity_count_after"
+        ),
         "missing": stage.get("missing"),
         "wrong_type": stage.get("wrong_type"),
         "file_size_before": stage.get("file_size_before"),

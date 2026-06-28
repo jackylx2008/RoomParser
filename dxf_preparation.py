@@ -36,15 +36,16 @@
       ``--max-steps``、``--rollback-to``、``--mark-step-accepted``、
       ``--mark-step-rejected``、``--render-step-images`` 等参数控制启动、
       续跑、人工验收和回滚。
-    - ``prepare-l2-room-dxf``：重放本轮在
-      ``log/dxf_pre_explode_clean_experiment/steps`` 中人工验证过的 L2 房间
-      边界预清理链。默认从已由 AutoCAD 炸开最大两个 modelspace 图块后的
-      step009 DXF 开始，继续删除家具图层、炸开剩余墙/柱 INSERT、删除炸块
-      暴露出的隐藏残留、删除多余图纸空间并清空保留的 L2 layout，最后输出
-      分阶段 manifest。最终阶段会打开并解冻全部图层，再按已验证的 L2
-      near/geometry 规则清理完全重线和近似重线，并以人工确认的 step014
-      DXF 为参照清理额外实体和不可达块。最后同步逐层炸开当前与参照中的
-      modelspace INSERT，每炸一层立即参照清理和去重，直到当前 INSERT 清零。
+    - ``prepare-l2-room-dxf``：重放人工和 AutoCAD 验证过的 L2 房间边界
+      预清理链。流程会删除家具图层、炸开指定墙/柱 INSERT、删除炸块暴露
+      的残留、清空多余图纸空间、打开并解冻图层，再按 L2 near/geometry
+      规则去重。默认的 010 之后流程固定为已验证的 door 保护清理：解锁
+      所有图层、删除非 door 填充、删除非 door 重线，并保留每个 step 的
+      ``input.dxf``、``candidate_after.dxf`` 和 ``manifest.json``。如果传入
+      ``--final-layer-policy-json``，会在最后按导出的图层 JSON 删除冻结、
+      不打印和缺失图层，同时保护墙体、门和完成面图层，避免误删精装墙体。
+      旧的参照清理链可通过 ``--post-009-cleanup-mode reference-guided``
+      手动启用。
 
 用途：
     供用户在项目根目录直接执行 ``python dxf_preparation.py <子命令> ...``，
